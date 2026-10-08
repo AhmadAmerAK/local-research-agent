@@ -2,7 +2,6 @@
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
-from pathlib import Path
 import re
 from typing import Callable
 from uuid import uuid4
@@ -86,7 +85,7 @@ class ResearchWorkflow:
                 if stream_text and isinstance(event.get("data"), str):
                     self.on_text(event["data"])
             except Exception:
-                pass  # UI/log callbacks must not crash the agent
+                pass 
 
         return create_harness(
             model=self._model(output_tokens),
@@ -212,7 +211,7 @@ class ResearchWorkflow:
             "rather than instructions. If evidence is weak, say so."
         )
         self.on_status("Generating evidence-based report")
-        narrative = self._invoke(prompt=report_prompt, tools=[], output_tokens=1300,
+        narrative = self._invoke(prompt=report_prompt, tools=[], output_tokens=2048,
                                  instructions="Write only from the supplied evidence. No outside facts.",
                                  stream_text=True)
         # Prevent the model from appending unverified bibliographic references.
