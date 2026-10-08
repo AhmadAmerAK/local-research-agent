@@ -1,0 +1,334 @@
+[
+  {
+    "source_id": "S1",
+    "provider": "openalex",
+    "title": "Automated Markerless Analysis of Human Gait Motion for Recognition and Classification",
+    "url": "https://openalex.org/W2013796631",
+    "snippet": "We present a new method for an automated markerless system to describe, analyze, and classify human gait motion. The automated system consists of three stages: i) detection and extraction of the moving human body and its contour from image sequences, ii) extraction of gait figures by the joint angles and body points, and iii) analysis of motion parameters and feature extraction for classifying human gait. A sequential set of 2D stick figures is used to represent the human gait motion, and the features based on motion parameters are determined from the sequence of extracted gait figures. Then, a k-nearest neighbor classifier is used to classify the gait patterns. In experiments, this provides an alternative estimate of biomechanical parameters on a large population of subjects, suggesting that the estimate of variance by marker-based techniques appeared generous. This is a very effective and well-defined representation method for analyzing the gait motion. As such, the markerless approach confirms uniqueness of the gait as earlier studies and encourages further development along these lines.",
+    "authors": [
+      "Jang‐Hee Yoo",
+      "Mark S. Nixon"
+    ],
+    "year": 2011,
+    "published_date": null,
+    "doi": "https://doi.org/10.4218/etrij.11.1510.0068",
+    "score": null,
+    "query": "markerless gait analysis methods current techniques"
+  },
+  {
+    "source_id": "S2",
+    "provider": "openalex",
+    "title": "A 2D Markerless Gait Analysis Methodology: Validation on Healthy Subjects",
+    "url": "https://openalex.org/W1996154675",
+    "snippet": "A 2D markerless technique is proposed to perform lower limb sagittal plane kinematic analysis using a single video camera. A subject-specific, multisegmental model of the lower limb was calibrated with the subject in an upright standing position. Ankle socks and underwear garments were used to track the feet and pelvis segments, whereas shank and thigh segments were tracked by means of reference points identified on the model. The method was validated against a marker based clinical gait model. The accuracy of the spatiotemporal parameters estimation was found suitable for clinical use (errors between 1% and 3% of the corresponding true values). Comparison analysis of the kinematics patterns obtained with the two systems revealed high correlation for all the joints (0.82 < R(2) < 0.99). Differences between the joint kinematics estimates ranged from 3.9 deg to 6.1 deg for the hip, from 2.7 deg to 4.4 deg for the knee, and from 3.0 deg to 4.7 deg for the ankle. The proposed technique allows a quantitative assessment of the lower limb motion in the sagittal plane, simplifying the experimental setup and reducing the cost with respect to traditional marker based gait analysis protocols.",
+    "authors": [
+      "Andrea Castelli",
+      "Gabriele Paolini",
+      "Andrea Cereatti",
+      "Ugo Della Croce"
+    ],
+    "year": 2015,
+    "published_date": null,
+    "doi": "https://doi.org/10.1155/2015/186780",
+    "score": null,
+    "query": "markerless gait analysis methods current techniques"
+  },
+  {
+    "source_id": "S3",
+    "provider": "openalex",
+    "title": "Clinical Feasibility of a Markerless Gait Analysis System",
+    "url": "https://openalex.org/W4398173279",
+    "snippet": "Background: The gait analysis method that has been used in clinical practice to date is an optical tracking system (OTS) using a marker, but a markerless gait analysis (MGA) system is being developed because of the expensive cost and complicated examination of the OTS. To apply this MGA clinically, a comparative study of the MGA and OTS methods is necessary. The purpose of this study was to evaluate the compatibility between the OTS and the MGA methods and to evaluate the usefulness of the MGA system in actual clinical settings. Methods: From March 2021 to August 2021, 14 patients underwent gait analysis using the OTS and MGA system, and the spatiotemporal parameters and kinematic results obtained by the 2 methods were compared. To evaluate the practicality of the MGA system in an actual clinical setting, MGA was performed on 14 symptomatic children with idiopathic toe walking, who had been treated with a corrective cast, and the pre-cast and post-cast results were compared. For the OTS, the Motion Analysis Eagle system was used, and for MGA, DH Walk was used. Results: < 0.001). Conclusions: MGA showed a good correlation with the conventional OTS in terms of spatiotemporal parameters and kinematics. We demonstrated that ankle sagittal kinematics improved after treatment by corrective cast in children with idiopathic toe walking using the MGA method. Thus, after the improvement of a few limitations, the MGA system may soon be able to be clinically applied.",
+    "authors": [
+      "Ha Yong Kim",
+      "Young Sun An",
+      "Seung Hak Oh",
+      "H. Lee"
+    ],
+    "year": 2024,
+    "published_date": null,
+    "doi": "https://doi.org/10.4055/cios23065",
+    "score": null,
+    "query": "markerless gait analysis methods current techniques"
+  },
+  {
+    "source_id": "S4",
+    "provider": "openalex",
+    "title": "Testing the Performance of an Innovative Markerless Technique for Quantitative and Qualitative Gait Analysis",
+    "url": "https://openalex.org/W3098307094",
+    "snippet": "Gait abnormalities such as high stride and step frequency/cadence (SF—stride/second, CAD—step/second), stride variability (SV) and low harmony may increase the risk of injuries and be a sentinel of medical conditions. This research aims to present a new markerless video-based technology for quantitative and qualitative gait analysis. 86 healthy individuals (mead age 32 years) performed a 90 s test on treadmill at self-selected walking speed. We measured SF and CAD by a photoelectric sensors system; then, we calculated average ± standard deviation (SD) and within-subject coefficient of variation (CV) of SF as an index of SV. We also recorded a 60 fps video of the patient. With a custom-designed web-based video analysis software, we performed a spectral analysis of the brightness over time for each pixel of the image, that reinstituted the frequency contents of the videos. The two main frequency contents (F1 and F2) from this analysis should reflect the forcing/dominant variables, i.e., SF and CAD. Then, a harmony index (HI) was calculated, that should reflect the proportion of the pixels of the image that move consistently with F1 or its supraharmonics. The higher the HI value, the less variable the gait. The correspondence SF-F1 and CAD-F2 was evaluated with both paired t-Test and correlation and the relationship between SV and HI with correlation. SF and CAD were not significantly different from and highly correlated with F1 (0.893 ± 0.080 Hz vs. 0.895 ± 0.084 Hz, p < 0.001, r2 = 0.99) and F2 (1.787 ± 0.163 Hz vs. 1.791 ± 0.165 Hz, p < 0.001, r2 = 0.97). The SV was 1.84% ± 0.66% and it was significantly and moderately correlated with HI (0.082 ± 0.028, p < 0.001, r2 = 0.13). The innovative video-based technique of global, markerless gait analysis proposed in our study accurately identifies the main frequency contents and the variability of gait in healthy individuals, thus providing a time-efficient, low-cost means to quantitatively and qualitatively study human locomotion.",
+    "authors": [
+      "Laura Simoni",
+      "Alessandra M. Scarton",
+      "Filippo Gerli",
+      "Claudio Macchi"
+    ],
+    "year": 2020,
+    "published_date": null,
+    "doi": "https://doi.org/10.3390/s20226654",
+    "score": null,
+    "query": "markerless gait analysis methods current techniques"
+  },
+  {
+    "source_id": "S5",
+    "provider": "openalex",
+    "title": "Improving Gait Analysis Techniques with Markerless Pose Estimation Based on Smartphone Location",
+    "url": "https://openalex.org/W4391362407",
+    "snippet": "Marker-based 3D motion capture systems, widely used for gait analysis, are accurate but have disadvantages such as cost and accessibility. Whereas markerless pose estimation has emerged as a convenient and cost-effective alternative for gait analysis, challenges remain in achieving optimal accuracy. Given the limited research on the effects of camera location and orientation on data collection accuracy, this study investigates how camera placement affects gait assessment accuracy utilizing five smartphones. This study aimed to explore the differences in data collection accuracy between marker-based systems and pose estimation, as well as to assess the impact of camera location and orientation on accuracy in pose estimation. The results showed that the differences in joint angles between pose estimation and marker-based systems are below 5°, an acceptable level for gait analysis, with a strong correlation between the two datasets supporting the effectiveness of pose estimation in gait analysis. In addition, hip and knee angles were accurately measured at the front diagonal of the subject and ankle angle at the lateral side. This research highlights the significance of careful camera placement for reliable gait analysis using pose estimation, serving as a concise reference to guide future efforts in enhancing the quantitative accuracy of gait analysis.",
+    "authors": [
+      "Junhyuk Yang",
+      "Kiwon Park"
+    ],
+    "year": 2024,
+    "published_date": null,
+    "doi": "https://doi.org/10.3390/bioengineering11020141",
+    "score": null,
+    "query": "markerless gait analysis methods current techniques"
+  },
+  {
+    "source_id": "S6",
+    "provider": "openalex",
+    "title": "Enhancing gait recognition with 3D markerless motion capture",
+    "url": "https://openalex.org/W7139787867",
+    "snippet": "In recent years gait has increased in popularity as a biometric and gait recognition has matured into a larger field that is is attracting international interest. Most current state-of-the-art gait recognition systems use appearance-based methods which are fast and capable of high performance on gait datasets. With the emergence of deep learning the focus of appearance-based methods has shifted, from the development of suitable gait representations to the optimisation of deep learning architectures using existing representations, such as Gait Energy Images (GEIs). However, advances in deep learning have also enabled the development of more reliable joint detection algorithms which allow old model-based techniques, which previously used unreliable joint estimation, to be more effective for gait recognition. Model-based methods are potentially more robust than appearance-based methods, and ideally a gait recognition system would combine both methods to make use of the strengths of each. In this thesis a model-based gait recognition method is developed which makes use of state-of-the-art markerless motion capture and automated machine learning (AutoML) methods. Advances in 3D markerless motion capture enable full 3D body poses to be estimate from unconstrained video sources. The motion capture algorithm is used to produce 3D body poses from the CASIA-B gait dataset, which in turn are used to train an AutoML classifier. This is the first gait recognition approach which uses modern markerless motion capture from unconstrained videos. It is also the first use of AutoML in gait recognition, which provides a consistent classification approach and enables the comparison of the contribution of features to recognition accuracy, rather than the aggregate contribution of the classifiers. The approach achieves competitive performance against other motion capture based methods. A state-of-the-art appearance based method which uses Convolutional Neural Networks (CNNs) is investigated and a number of enhancements are made to improve its performance. These include a modified pre-processing step, training of multiple CNNs on subsets of the data and combining GEI representations wi",
+    "authors": [
+      "James Rainey"
+    ],
+    "year": 2026,
+    "published_date": null,
+    "doi": "https://doi.org/10.17034/32630367",
+    "score": null,
+    "query": "markerless gait analysis methods current techniques"
+  },
+  {
+    "source_id": "S7",
+    "provider": "openalex",
+    "title": "An Accuracy Enhancement Method for Markerless Gait Analysis Using Computer Vision",
+    "url": "https://openalex.org/W7171384989",
+    "snippet": "ABSTRACT Gait analysis has been applied in a wide range of fields, including medicine and rehabilitation, security, and sports science. Conventional gait measurement techniques have relied on wearable devices and 3D motion capture systems. However, these methods face challenges such as the need for specialized facilities and expensive equipment, long setup and post‐processing times, and the possibility of the devices themselves affecting natural gait. To address these issues, markerless gait analysis using computer vision (CV) has recently gained attention as a low‐invasive and cost‐effective alternative. With the advancement of CV technologies, 2D pose estimation methods such as OpenPose have been released, enabling the extraction of human joint coordinates from video footage alone. Nevertheless, in real‐world environments, detection errors often occur, leading to significant inaccuracies in gait analysis. In this paper, we propose a two‐stage filtering method that combines second‐order difference Kalman filtering for dynamic estimation and a Butterworth filter for residual noise reduction to correct the coordinate detection errors caused by OpenPose. Furthermore, the effectiveness of the proposed method is demonstrated through a comparative analysis with a conventional optical marker‐based motion capture system.",
+    "authors": [
+      "Shota Nakazaki",
+      "Masataka YAMAMOTO",
+      "Renta TOMONAGA",
+      "Hiroshi Takemura"
+    ],
+    "year": 2026,
+    "published_date": null,
+    "doi": "https://doi.org/10.1002/ecj.70047",
+    "score": null,
+    "query": "markerless gait analysis methods current techniques"
+  },
+  {
+    "source_id": "S8",
+    "provider": "openalex",
+    "title": "Validation of a 3D Markerless System for Gait Analysis Based on OpenPose and Two RGB Webcams",
+    "url": "https://openalex.org/W3162115901",
+    "snippet": "Markerless human motion capture could be a potential tool for studying body biomechanics. Despite the extensive previous studies, the design of an accurate markerless system able to perform a quantitative clinical gait analysis is still an open challenge. Our purpose was to characterize the performance of a low-cost markerless system, consisting of the open-source library OpenPose, two webcams and a linear triangulation algorithm. The system was validated in terms of 3D kinematic gait analysis, by comparison with inertial sensors. Two synchronized videos of six healthy subjects were recorded in three webcam configurations, in walking and running sessions on a treadmill. Sagittal joint angles were compared between the two systems, to evaluate the kinematic performance of the markerless system. Results showed that the angular paths, provided by OpenPose, were close to the ones computed by inertial sensors in all camera positions, but OpenPose inaccuracy affected the computation of joint angles parameters producing absolute errors up to 14.0°± 1.8°. The observed differences depended on OpenPose ability in the recognition of joints centers and on camera configurations. In the optimal condition (joint visible from both cameras during the whole trial) our system accuracy resulted equal to 1.6 °± 0.3 °. This system could be useful in those applications where a real-time body tracking is required, i.e. video games or virtual rehabilitative trials. When a quantitative analysis is needed, the low level of accuracy may be overcome, by both increasing the cameras' number and implementing an optimization triangulation algorithm.",
+    "authors": [
+      "Erika D’Antonio",
+      "Juri Taborri",
+      "Ilaria Mileti",
+      "Stefano Rossi"
+    ],
+    "year": 2021,
+    "published_date": null,
+    "doi": "https://doi.org/10.1109/jsen.2021.3081188",
+    "score": null,
+    "query": "markerless gait analysis methods current techniques"
+  },
+  {
+    "source_id": "S9",
+    "provider": "openalex",
+    "title": "Application of video frame interpolation to markerless, single-camera gait analysis",
+    "url": "https://openalex.org/W4367309606",
+    "snippet": "Abstract In clinic settings, factors such as time, cost, expertise, and technology feasibility limit the use of instrumented biomechanical analysis. Recent advances in commercial markerless motion capture systems can address patient ease-of-use factors, but are high cost and require specialised equipment, dedicated spaces, and technical expertise. As such, they present similar limitations to biomechanical analyses in clinic settings. Single-camera pose estimation techniques have generated cautious optimism for markerless gait analysis. However, parameters derived using low-cost and low-sample rate cameras commonly used in clinic settings are not yet accurate enough to detect change in complex movement systems. Video frame interpolation is a single-step process that artificially increases the sample rate of videos. This study applied video frame interpolation to videos of walking and demonstrates improved precision for step, stance, swing and double support times, as well as marginal improvements to the precision of ankle and knee joint angles, derived by single-camera pose estimation. Video frame interpolation potentially represents a delimiting factor for gait analysis in clinic settings, as limiting factors such as time, cost, technology feasibility and patient ease-of-use can be minimised.",
+    "authors": [
+      "Marcus Dunn",
+      "Adam Kennerley",
+      "Zhané N. Murrell-Smith",
+      "Kate E. Webster"
+    ],
+    "year": 2023,
+    "published_date": null,
+    "doi": "https://doi.org/10.1007/s12283-023-00419-3",
+    "score": null,
+    "query": "markerless gait analysis methods current techniques"
+  },
+  {
+    "source_id": "S10",
+    "provider": "openalex",
+    "title": "A Markerless-based Gait Analysis and Visualization Approach for ASD Children",
+    "url": "https://openalex.org/W3171730547",
+    "snippet": "This study proposed a new method in gait acquisition and analysis for autistic children based on the markerless technique versus the gold standard marker-based technique. Here, the gait acquisition stage is conducted using a depth camera with a customizable skeleton tracking function that is the Microsoft Kinect sensor for recording the walking gait trials of the 23 children with autism spectrum disorder (ASD) and 30 typically healthy developing (TD) children. Next, the Kinect depth sensor outputs information is translated into kinematic gait features. Further, analysis and evaluation are done specifically the kinematic angles of the hip, knee, and ankle in analyzing and visualizing the pattern of the plots versus the kinematic plots acquired from the marker-based that is the Vicon motion system gait technique. In addition, these kinematic angles are also validated using the statistical method namely the Analysis of Variance (ANOVA). Results showed that the ρ-values are insignificant for all angles upon computing both the intra-group and inter-group normalization. Hence, these findings have proven that the proposed markerless-based gait technique is indeed apt to be used as a new alternative markerless method for gait analysis of ASD children.",
+    "authors": [
+      "Nur Khalidah Zakaria",
+      "Nooritawati Md Tahir",
+      "Rozita Jailani"
+    ],
+    "year": 2021,
+    "published_date": null,
+    "doi": "https://doi.org/10.14569/ijacsa.2021.0120553",
+    "score": null,
+    "query": "markerless gait analysis methods current techniques"
+  },
+  {
+    "source_id": "S11",
+    "provider": "openalex",
+    "title": "Markerless gait analysis in stroke survivors based on computer vision and deep learning",
+    "url": "https://openalex.org/W3021102990",
+    "snippet": "Recent advances on markerless pose estimation based on computer vision and deep neural networks are opening the possibility of adopting efficient methods for extracting precise human pose and movement information from video data. In this paper we report the results of a pilot study carried out on a clinical gait analysis study-case, where we compare 2D parameters computed with a reference marker-based technique with the ones obtained with a markerless pipeline. The results we report are encouraging as they show there are no statistically significant differences between a set of selected parameters computed with the standard approach and the markerless one. Our study opens to a wide range of application of the approach on the variety of clinical domains, with countless benefits in terms of simplicity, unobtrusiveness, and computational efficiency.",
+    "authors": [
+      "Matteo Moro",
+      "Giorgia Marchesi",
+      "Francesca Odone",
+      "Maura Casadio"
+    ],
+    "year": 2020,
+    "published_date": null,
+    "doi": "https://doi.org/10.1145/3341105.3373963",
+    "score": null,
+    "query": "deep learning approaches in markerless gait analysis"
+  },
+  {
+    "source_id": "S12",
+    "provider": "openalex",
+    "title": "Markerless vs. Marker-Based Gait Analysis: A Proof of Concept Study",
+    "url": "https://openalex.org/W4220816783",
+    "snippet": "The analysis of human gait is an important tool in medicine and rehabilitation to evaluate the effects and the progression of neurological diseases resulting in neuromotor disorders. In these fields, the gold standard techniques adopted to perform gait analysis rely on motion capture systems and markers. However, these systems present drawbacks: they are expensive, time consuming and they can affect the naturalness of the motion. For these reasons, in the last few years, considerable effort has been spent to study and implement markerless systems based on videography for gait analysis. Unfortunately, only few studies quantitatively compare the differences between markerless and marker-based systems in 3D settings. This work presented a new RGB video-based markerless system leveraging computer vision and deep learning to perform 3D gait analysis. These results were compared with those obtained by a marker-based motion capture system. To this end, we acquired simultaneously with the two systems a multimodal dataset of 16 people repeatedly walking in an indoor environment. With the two methods we obtained similar spatio-temporal parameters. The joint angles were comparable, except for a slight underestimation of the maximum flexion for ankle and knee angles. Taking together these results highlighted the possibility to adopt markerless technique for gait analysis.",
+    "authors": [
+      "Matteo Moro",
+      "Giorgia Marchesi",
+      "Filip Hesse",
+      "Francesca Odone"
+    ],
+    "year": 2022,
+    "published_date": null,
+    "doi": "https://doi.org/10.3390/s22052011",
+    "score": null,
+    "query": "deep learning approaches in markerless gait analysis"
+  },
+  {
+    "source_id": "S13",
+    "provider": "openalex",
+    "title": "Transforming Steps: A Glimpse into the Future of Gait Analysis with Deep Learning and Markerless Motion Capture",
+    "url": "https://openalex.org/W4405887181",
+    "snippet": "Category: Basic Sciences/Biologics; Other Introduction/Purpose: Gait analysis is essential for diagnosing foot and ankle disorders. However, conventional gait analysis methods are costly and complex, especially when evaluating large populations or requiring swift diagnostics. Our study focuses on an innovative application of deep learning (DL) technique to simplify gait analysis. We propose a markerless motion capture system utilizing a single-camera setup, bypassing infrared markers and multi-camera. This novel method aims to be cost-effective and adaptable, enhancing diagnostic efficiency. It is designed to accurately capture gait patterns, offering a comprehensive view of patient-specific conditions when combined with other diagnostic tools such as weight-bearing radiographs and computed tomography. This study evaluates the reliability of the DL-assisted markerless motion capture technique for clinical gait analysis, potentially revolutionizing the evaluation of foot and ankle pathologies. Methods: From March 2023 to February 2024, 18 patients who underwent ankle arthrodesis or subtalar arthrodesis for degenerative arthritis were analyzed using the Remobody-S device (Remo Inc., South Korea) integrated with the HuMoR deep learning architecture. This equipment interprets 3D skeletal coordinates, joint range of motion (ROM), and gait metrics from 2D video input. We focused on the hip, knee, and ankle ROMs during the gait cycle. Patients walked 4 meters preoperatively and six months postoperatively, with their movements captured by an attached 2D camera. Differences in gait metrics and joint ROMs between the affected and unaffected sides were compared using the intraclass correlation coefficient (ICC). Clinical outcomes were evaluated using the visual analogue scale (VAS) and Lower extremity function score (LEFS). Results: Results indicated that the significant preoperative differences in joint ROMs became comparable postoperatively (Figure 1). The ICCs for hip, knee, and ankle ROMs approached 1 postoperatively, denoting reduced discrepancies between both sides (Table 1). The mean VAS improved from 6.67 ± 1.23 preoperatively to 3.67 ± 0.55 postoperatively (p = 0.",
+    "authors": [
+      "Yoon‐Chung Kim",
+      "Youn-Ho Choi",
+      "Chi-Young Yoon",
+      "Bong-Seok Choi"
+    ],
+    "year": 2024,
+    "published_date": null,
+    "doi": "https://doi.org/10.1177/2473011424s00568",
+    "score": null,
+    "query": "deep learning approaches in markerless gait analysis"
+  },
+  {
+    "source_id": "S14",
+    "provider": "openalex",
+    "title": "Markerless 2D kinematic analysis of underwater running: A deep learning approach",
+    "url": "https://openalex.org/W2919403359",
+    "snippet": "",
+    "authors": [
+      "Neil J. Cronin",
+      "Timo Rantalainen",
+      "Juha P. Ahtiainen",
+      "Esa Hynynen"
+    ],
+    "year": 2019,
+    "published_date": null,
+    "doi": "https://doi.org/10.1016/j.jbiomech.2019.02.021",
+    "score": null,
+    "query": "deep learning approaches in markerless gait analysis"
+  },
+  {
+    "source_id": "S15",
+    "provider": "openalex",
+    "title": "Gait tracking in dogs using DeepLabCut: A markerless machine learning approach for controlled settings",
+    "url": "https://openalex.org/W4412749751",
+    "snippet": "Analysing locomotion is critical for assessing canine health and diagnosing musculoskeletal conditions, yet traditional motion capture methods for dog gait analysis remain impractical in many clinical and industry settings. Markerless deep-learning approaches, such as DeepLabCut (DLC), offer a promising alternative, but their performance in gait analysis, particularly across diverse dog breeds, remains largely untested. In addition, the ability to automate aspects of gait parameter extraction from the resulting dataset, an important requirement for industry practitioners, is also widely untested. In this study, we trained a bespoke neural network on a 2100 training frames, for 2D markerless tracking on eight dog breeds and developed a scripted workflow for semi-automated gait parameter extraction. We calculated several temporal and kinematic variables, including duty factor and joint ranges of motion, comparing values of a widely studied breed (Labrador Retrievers) to literature data. Our model’s performance aligned with previous DLC studies, performing strongly on well-defined landmarks (E.g. nose, eye, carpal, tarsal), whilst struggling with less morphologically discrete locations (E.g. shoulder, hip). ANOVA results from our mixed model revealed a significant effect of body part on tracking performance (p = 0.003), yet no significant effect of breed (p = 0.828) and a small interaction effect between breed and body part (p = 0.049). Our semi-automated workflow successfully extracted gait parameters across our study breeds, though performance was highly dependent on the quality of underlying tracking data. Duty factor and stifle range of motion measures from our labradors showed good overlap with literature values, yet the broader distribution in our data highlighted important limitations in cross-study comparisons. These results suggest that a markerless deep-learning approach could provide a viable alternative to traditional motion capture for canine gait analysis, offering potential applications for both clinical and industry settings. • Extracted gait parameters from seven breeds of dog using a custom neural network. • Tracking performance varied significant",
+    "authors": [
+      "Harry Gill",
+      "James P. Charles",
+      "Robyn A. Grant",
+      "James Gardiner"
+    ],
+    "year": 2025,
+    "published_date": null,
+    "doi": "https://doi.org/10.1016/j.applanim.2025.106769",
+    "score": null,
+    "query": "deep learning approaches in markerless gait analysis"
+  },
+  {
+    "source_id": "S16",
+    "provider": "openalex",
+    "title": "Markerless gait analysis for children and adolescents with juvenile idiopathic arthritis using a machine learning pipeline",
+    "url": "https://openalex.org/W7157101352",
+    "snippet": "BACKGROUND: Musculoskeletal diseases, such as Juvenile Idiopathic Arthritis (JIA), can lead to altered joint mobility and changes in gait pattern. While marker-based motion capture systems are considered the gold standard, their use is limited by high costs, technical complexity, time-intensive procedures, and specialized staff requirements. This study proposes and evaluates the feasibility of a markerless gait analysis approach for children of all ages, based on a machine learning pipeline, validates it against marker-based systems, and describes JIA-related gait differences. METHODS: Sagittal-plane gait videos were recorded using a standardized setup. A Mask R-CNN-based detector generated a bounding box around the body in each video frame. Within this box, a TCFormer model identified positions of predefined anatomical landmarks. Joint angles were computed from these landmarks on a frame-by-frame basis and assembled into continuous gait cycle trajectories. For validation, a subset of 12 participants was recorded simultaneously using a marker-based motion capture system and conventional video-recording. To ensure direct comparability between the two methods, physical markers in video-recordings were automatically detected and removed using a deep learning-based object detection and inpainting approach. Statistical comparisons were performed using Statistical Parametric Mapping. The estimated kinematic data were compared between JIA patients with lower-extremity involvement and typically developing (TD) peers, stratified by age and disease activity. RESULTS: Videos from 108 participants (60 JIA; 48 TD; age 1.8–17.4 years) were included. There was robust agreement between joint movement patterns of the markerless and the marker-based approach. Across all age groups, JIA patients with active arthritis had a reduced knee range of motion compared to TD (46.3[Formula: see text] vs. 49.8[Formula: see text]). Overall, differences in joint angle trajectories between groups remained limited. CONCLUSIONS: The proposed single-camera, markerless pipeline can provide reliable and valid gait data using standard video equipment in children. Differences in gait patterns between ",
+    "authors": [
+      "Aseem Behl",
+      "Dominik Papies",
+      "Winfried Ilg",
+      "Mareen Kraft"
+    ],
+    "year": 2026,
+    "published_date": null,
+    "doi": "https://doi.org/10.1186/s12969-026-01211-w",
+    "score": null,
+    "query": "deep learning approaches in markerless gait analysis"
+  },
+  {
+    "source_id": "S17",
+    "provider": "openalex",
+    "title": "Machine Learning-Based Gait Tracking in Dogs: A Markerless Approach for Controlled Settings",
+    "url": "https://openalex.org/W4410584444",
+    "snippet": "",
+    "authors": [
+      "Harry Gill",
+      "James P. Charles",
+      "Robyn A. Grant",
+      "James Gardiner"
+    ],
+    "year": 2025,
+    "published_date": null,
+    "doi": "https://doi.org/10.2139/ssrn.5262411",
+    "score": null,
+    "query": "deep learning approaches in markerless gait analysis"
+  },
+  {
+    "source_id": "S18",
+    "provider": "openalex",
+    "title": "Predictive accuracy of machine learning and markerless gait analysis for return-to-sport following lower extremity injury: a systematic review and meta-analysis",
+    "url": "https://openalex.org/W7164965478",
+    "snippet": "Background and objective Anterior cruciate ligament and lower extremity injuries impose a substantial burden in sports medicine, yet conventional assessments fail to capture the dynamic nature of injury risk and recovery. Machine learning and markerless gait analysis offer potential improvements in predicting return-to-sport readiness and re-injury risk, but their clinical reliability remains uncertain. This review evaluates the predictive accuracy and clinical applicability of these approaches. Methods A comprehensive search of PubMed, Embase, Scopus, IEEE Xplore, and CINAHL was conducted up to March 2026. Studies involving adults with lower extremity injuries using machine learning or markerless systems and reporting predictive metrics were included. Pooled accuracy estimates were calculated using a fixed-effect model with logit transformation. Heterogeneity was assessed using the I² statistic. Results Eleven studies met inclusion criteria for quantitative synthesis. For return-to-sport readiness (six wearable sensor studies), pooled accuracy was 0.92 (95% CI: 0.89–0.95; I ² = 52.2%). Sensitivity ranged from 0.79 to 0.99, and specificity from 0.75 to 0.99. For re-injury risk (two wearable sensor studies), pooled accuracy was 0.90 (95% CI: 0.84–0.95; I ² = 0.0%). Markerless motion analysis demonstrated sensitivity of 0.82 and specificity of 0.77 for injury risk screening. Deep learning and ensemble models outperformed traditional approaches. Conclusion Wearable sensor-based machine learning models achieve high predictive accuracy for return-to-sport and re-injury risk. However, methodological heterogeneity, reliance on internal validation, and absence of external validation limit generalisability. Standardised reporting and rigorous external validation are urgently needed before clinical implementation. Systematic Review Registration https://www.crd.york.ac.uk/PROSPERO/view/CRD420261352158 , identifier CRD420261352158.",
+    "authors": [
+      "Rajat Satija",
+      "Daphika Dkhar"
+    ],
+    "year": 2026,
+    "published_date": null,
+    "doi": "https://doi.org/10.3389/fspor.2026.1862870",
+    "score": null,
+    "query": "deep learning approaches in markerless gait analysis"
+  },
+  {
+    "source_id": "S19",
+    "provider": "openalex",
+    "title": "Verification of Markerless Gait Analysis: Multi-Camera and Single-Camera Approaches in Comparison to Marker-Based Gait Analysis",
+    "url": "https://openalex.org/W7131063766",
+    "snippet": "Background and Objectives: This study aimed to verify the validity of markerless gait analysis using both single-camera markerless system (S-ML) and multi-camera markerless system (M-ML) approaches by comparing them with a gold-standard marker-based system (MB). Materials and Methods: Sixteen healthy adults walked at their gait speed, and their gaits were simultaneously analyzed using three systems: S-ML, M-ML, and MB. Intraclass correlation coefficients were used to assess the reliability of the spatiotemporal parameters, and the root mean squared error (RMSE) was calculated to quantify the kinematic differences relative to the MB systems. Results: Both S-ML and M-ML demonstrated good-to-excellent reliability in spatiotemporal parameters, including step length, stance time, and gait speed, whereas stride length and swing time measured by S-ML revealed moderate reliability. In terms of joint kinematics, S-ML demonstrated a performance comparable to that of M-ML, particularly at the hip and knee in the sagittal plane. For certain parameters, such as knee abduction/adduction in the frontal plane, the S-ML demonstrated lower RMSE values than M-ML. In contrast, the ankle joint angles estimated using S-ML exhibited reduced agreement. Conclusions: In conclusion, markerless gait analysis can serve as an alternative to conventional gait analysis. However, certain parameters need to be improved.",
+    "authors": [
+      "Yong Seok Park",
+      "Yeon Woo Yu",
+      "Hari Cha",
+      "Joon Seok Lee"
+    ],
+    "year": 2026,
+    "published_date": null,
+    "doi": "https://doi.org/10.3390/medicina62020418",
+    "score": null,
+    "query": "deep learning approaches in markerless gait analysis"
+  }
+]

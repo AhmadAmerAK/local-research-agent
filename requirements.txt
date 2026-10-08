@@ -1,8 +1,5 @@
-# Agent harness
-strands-harness
-
-# Agent framework + local Ollama integration
-strands-agents[ollama]
+# Agent harness + Agent framework + local Ollama integration
+strands-harness[ollama]
 
 # Ubuntu desktop interface
 PyQt6
