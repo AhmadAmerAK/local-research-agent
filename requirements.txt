@@ -1,0 +1,21 @@
+# Agent harness
+strands-harness
+
+# Agent framework + local Ollama integration
+strands-agents[ollama]
+
+# Ubuntu desktop interface
+PyQt6
+
+# Research API requests
+httpx
+
+# Data validation and structured outputs
+pydantic
+
+# Environment configuration
+python-dotenv
+
+# Testing
+pytest
+pytest-qt

@@ -218,3 +218,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Agent behavior cache
+.agent/
+
+# Coding Agent
+.codex/
+
