@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from agent.config import Settings
 from agent.evidence import (EvidenceStore, Source, abstract_from_inverted_index,
-                            normalize_openalex, normalize_tavily)
+                            normalise_openalex, normalise_tavily)
 from agent.tools import ResearchAPIError, ResearchTools, openalex_search, tavily_search
 from agent.orchestrator import ResearchWorkflow, _extract_json
 
@@ -80,14 +80,14 @@ def test_openalex_inverted_index_and_sources():
             "authorships": [{"author": {"display_name": "Researcher"}}],
             "abstract_inverted_index": {"Gait": [0], "recognition": [1], "works": [2]}}
     assert abstract_from_inverted_index(data["abstract_inverted_index"]) == "Gait recognition works"
-    normalized = normalize_openalex(data)
+    normalized = normalise_openalex(data)
     assert normalized.snippet == "Gait recognition works"
     assert normalized.authors == ["Researcher"]
     assert normalized.year == 2025
 
 
 def test_tavily_normalization():
-    source = normalize_tavily({"title": "Public report", "url": "https://example.com/x",
+    source = normalise_tavily({"title": "Public report", "url": "https://example.com/x",
                                "content": "Web finding", "published_date": "2026-10-01", "score": 0.95})
     assert source.provider == "tavily" and source.score == 0.95
 
