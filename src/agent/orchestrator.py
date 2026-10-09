@@ -29,6 +29,7 @@ class ResearchResult:
     sources: list[Source]
     warnings: list[str]
     run_directory: str | None = None
+    incomplete: bool = False
 
 
 def _extract_json(text: str) -> dict:
@@ -119,7 +120,19 @@ class ResearchWorkflow:
                             report_only=report_only)
         try:
             if not report_only:
-                return str(agent(prompt)).strip()
+                from strands.types.exceptions import MaxTokensReachedException
+                try:
+                    return str(agent(prompt)).strip()
+                except MaxTokensReachedException:
+                    if not tools:
+                        raise  # Classification has no research evidence to recover.
+                    # Search tools have already saved their evidence (or errors).
+                    # An overlong search explanation must not abort the workflow.
+                    self.on_status("Search step reached its length limit; checking retrieved evidence")
+                    return next((
+                        "".join(block.get("text", "") for block in message.get("content", []))
+                        for message in reversed(agent.messages) if message.get("role") == "assistant"
+                    ), "").strip()
             from strands.types.exceptions import MaxTokensReachedException
 
             self._report_warning = None
@@ -235,16 +248,28 @@ class ResearchWorkflow:
 
         for round_number in range(1, self.config.max_research_rounds + 1):
             self._search_round(route, question, search, round_number)
+            if search.provider_errors:
+                self.on_status("Research service unavailable; stopping further searches")
+                break
             if len(store.sources) >= self.config.min_required_sources:
                 break
 
         if not store.sources:
-            message = ("No sources were retrieved. Check your API key, network connection "
-                       "and research query; I cannot produce an evidence-based report.")
+            if search.provider_errors:
+                message = (
+                    "I couldn't retrieve sources from the research service, so I couldn't "
+                    "produce a research report. Please check your internet connection or "
+                    "research-service settings and try again."
+                )
+            else:
+                message = "No sources were found for this question. Please try a more specific research question."
+            self.on_status("No research evidence available")
             return ResearchResult(route, message, [], ["No evidence retrieved"], str(run_dir))
 
         selected = store.select(self.config.max_sources)
         warnings = []
+        if search.provider_errors:
+            warnings.append("Some searches failed. This report uses only the sources successfully retrieved.")
         if len(selected) < self.config.min_required_sources:
             warnings.append(f"Only {len(selected)} sources were found; the minimum is "
                             f"{self.config.min_required_sources}. No references will be invented.")
@@ -281,7 +306,7 @@ class ResearchWorkflow:
                     "Use the supplied source IDs in separate brackets, for example [S1]."
                 )
             narrative = self._invoke(
-                prompt=prompt, tools=[], output_tokens=2048,
+                prompt=prompt, tools=[], output_tokens=3072,
                 instructions=_read_guide() + "\n\nWrite only from the supplied evidence. No outside facts.",
                 stream_text=True, report_only=True,
             )
@@ -314,5 +339,6 @@ class ResearchWorkflow:
         report = narrative + "\n\n## References\n" + (refs or "No valid references cited.")
         (run_dir / "report.md").write_text(report + "\n", encoding="utf-8")
         (run_dir / "warnings.json").write_text(json.dumps(warnings, indent=2), encoding="utf-8")
-        self.on_status("Research complete")
-        return ResearchResult(route, report, selected, warnings, str(run_dir))
+        self.on_status("Partial report available" if self._report_warning else "Research complete")
+        return ResearchResult(route, report, selected, warnings, str(run_dir),
+                              incomplete=bool(self._report_warning))

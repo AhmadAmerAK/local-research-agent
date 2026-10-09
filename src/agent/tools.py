@@ -105,12 +105,15 @@ class ResearchTools:
         self.used_queries = 0
         self.used_this_round = 0
         self.queries: list[str] = []
+        self.provider_errors: list[str] = []
         self.on_status = on_status or (lambda _: None)
 
     def start_round(self) -> None:
         self.used_this_round = 0
 
     def _search(self, provider: str, query: str) -> str:
+        if self.provider_errors:
+            return json.dumps({"error": self.provider_errors[-1], "provider": provider})
         query = " ".join(query.split()).strip()[:300]
         if not query:
             return json.dumps({"error": "Search query cannot be blank"})
@@ -141,6 +144,7 @@ class ResearchTools:
                  "snippet": item.snippet[:700]} for item in added
             ]}, ensure_ascii=False)
         except ResearchAPIError as exc:
+            self.provider_errors.append(str(exc))
             LOGGER.warning("%s search failed: %s", provider, exc)
             self.on_status(str(exc))
             return json.dumps({"error": str(exc), "provider": provider})
@@ -154,16 +158,22 @@ class ResearchTools:
     def strand_tools(self, route: str) -> list:
         # Register exactly ONE provider so the model cannot override Python's routing.
         from strands import tool
+
+        def framework_result(payload: str):
+            if "error" in json.loads(payload):
+                return {"status": "error", "content": [{"text": payload}]}
+            return payload
+
         if route == "academic":
             @tool
-            def search_papers(query: str) -> str:
+            def search_papers(query: str) -> str | dict:
                 """Search OpenAlex scientific/academic publications by topic or question."""
-                return self.search_papers(query)
+                return framework_result(self.search_papers(query))
             return [search_papers]
         if route == "general":
             @tool
-            def search_web(query: str) -> str:
+            def search_web(query: str) -> str | dict:
                 """Search the general web through Tavily for evidence-backed research."""
-                return self.search_web(query)
+                return framework_result(self.search_web(query))
             return [search_web]
         return []

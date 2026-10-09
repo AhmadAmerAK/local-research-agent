@@ -13,9 +13,9 @@ from gui.gui_main import MessageCard, ResearchWindow, open_source
 from gui.runtime import Activity, default_workflow_factory
 
 
-def result(answer="## Findings\nSupported [S1].", warnings=None):
+def result(answer="## Findings\nSupported [S1].", warnings=None, incomplete=False):
     return SimpleNamespace(
-        answer=answer, route="academic", warnings=warnings or [], run_directory="/tmp/run",
+        answer=answer, route="academic", warnings=warnings or [], run_directory="/tmp/run", incomplete=incomplete,
         sources=[SimpleNamespace(source_id="S1", title="A study", url="https://example.org/study")],
     )
 
@@ -91,8 +91,9 @@ def test_academic_milestone_streaming_and_responsive(qtbot, make_window):
     assert "https://example.org/study" in window.answer_card.body.toHtml()
     assert "Limited evidence" in window.activity_view.toPlainText()
     assert len(window.findChildren(MessageCard)) == 3
-    assert "Limited evidence" in window.answer_card.body.toPlainText()
+    assert "Limited evidence" not in window.answer_card.body.toPlainText()
     assert window.status.text() == "Research complete"
+    assert "This answer is incomplete" not in window.answer_card.body.toPlainText()
 
 
 def test_blank_question_and_repeated_submission(qtbot, make_window):
@@ -129,7 +130,7 @@ def test_failure_and_retry(qtbot, make_window, factory_error):
     window = make_window(factory)
     send(qtbot, window)
     qtbot.waitUntil(lambda: window.worker is None)
-    assert "Research failed" in window.answer_card.body.toPlainText()
+    assert "couldn't complete the research" in window.answer_card.body.toPlainText()
     assert "ERROR" in window.activity_view.toPlainText()
     window.input.setPlainText("Retry question")
     assert window.send.isEnabled()
@@ -238,7 +239,8 @@ def test_failed_stream_preserves_partial_response_in_one_card(qtbot, make_window
     qtbot.waitUntil(lambda: window.worker is None)
     response = window.answer_card.body.toPlainText()
     assert "The report generated so far" in response
-    assert "has been kept" in response
+    assert "has been kept" not in response
+    assert "couldn't complete the research" in response
     assert "MaxTokensReachedException" not in response
     assert len(window.findChildren(MessageCard)) == 3
     qtbot.wait(100)  # A pending draft-render timer must not erase the explanation.
@@ -261,3 +263,96 @@ def test_no_evidence_warning_does_not_create_another_response(qtbot, make_window
     assert len(window.findChildren(MessageCard)) == 3
     assert "No evidence retrieved" not in window.answer_card.body.toPlainText()
     assert "No evidence retrieved" in window.activity_view.toPlainText()
+    assert window.status.text() == "Research unavailable — please try again"
+
+
+def test_token_limit_without_report_never_claims_text_was_retained(qtbot, make_window):
+    def factory(status, text, activity):
+        class SearchOnlyWorkflow:
+            def run(self, question):
+                from strands.types.exceptions import MaxTokensReachedException
+                activity(Activity("model_text", "Search-stage explanation visible only in activity."))
+                raise MaxTokensReachedException("Maximum token limit")
+        return SearchOnlyWorkflow()
+    window = make_window(factory)
+    send(qtbot, window)
+    qtbot.waitUntil(lambda: window.worker is None)
+    response = window.answer_card.body.toPlainText()
+    assert "couldn't complete the research" in response
+    assert "has been kept" not in response
+    assert "Search-stage explanation" in window.activity_view.toPlainText()
+    assert len(window.findChildren(MessageCard)) == 3
+
+
+def test_provider_failure_and_search_token_limit_together(qtbot, make_window, monkeypatch, tmp_path):
+    # Reproduce the supplied trace through the actual workflow and Qt worker:
+    # provider fails, search prose appears only in activity, then search hits its limit.
+    from agent import orchestrator, tools as research_tools
+    from agent.config import Settings
+    from agent.orchestrator import ResearchWorkflow
+    from strands.types.exceptions import MaxTokensReachedException
+    monkeypatch.setattr(orchestrator, "AGENT_DIR", tmp_path)
+    requests = []
+
+    def unavailable(*args, **kwargs):
+        requests.append(True)
+        raise research_tools.ResearchAPIError("Research service unreachable or timed out")
+    monkeypatch.setattr(research_tools, "tavily_search", unavailable)
+
+    def factory(status, text, activity):
+        settings = Settings("", "fake-key", "http://localhost:11434", "qwen3:4b-instruct",
+                            2, 3, 2, 3, 8192, False)
+        workflow = ResearchWorkflow(settings, on_status=status, on_text=text)
+        workflow.classify = lambda question: "general"
+
+        class SearchAgent:
+            messages = []
+            def __call__(self, prompt):
+                tool_result = self.tool(query="meaning of life philosophical perspectives")
+                assert tool_result["status"] == "error"
+                activity(Activity("tool_result", tool_result))
+                explanation = "I cannot retrieve evidence because the service is unreachable."
+                self.messages = [{"role": "assistant", "content": [{"text": explanation}]}]
+                activity(Activity("model_text", explanation))
+                raise MaxTokensReachedException("Maximum token limit")
+            def shutdown(self):
+                pass
+
+        def create(**kwargs):
+            agent = SearchAgent()
+            agent.tool = kwargs["tools"][0]
+            return agent
+        workflow._agent = create
+        return workflow
+
+    window = make_window(factory)
+    send(qtbot, window, "what is the meaning of life")
+    qtbot.waitUntil(lambda: window.worker is None)
+    response = window.answer_card.body.toPlainText()
+    assert "couldn't retrieve sources" in response
+    assert "has been kept" not in response
+    assert "No evidence retrieved" not in response
+    assert len(requests) == 1  # No second research round after a provider outage.
+    assert len(window.findChildren(MessageCard)) == 3
+    assert window.status.text() == "Research unavailable — please try again"
+    assert '"status": "error"' in window.activity_view.toPlainText()
+    assert "RESEARCH_COMPLETED" not in window.activity_view.toPlainText()
+
+
+def test_report_continuation_diagnostics_appear_only_in_activity(qtbot, make_window):
+    warning = "This report reached its length limit before finishing. The text generated so far has been kept."
+    def factory(*callbacks):
+        class PartialReportWorkflow:
+            def run(self, question):
+                return result(answer="## Findings\nRetrieved evidence [S1].", warnings=[warning], incomplete=True)
+        return PartialReportWorkflow()
+    window = make_window(factory)
+    send(qtbot, window)
+    qtbot.waitUntil(lambda: window.worker is None)
+    response = window.answer_card.body.toPlainText()
+    assert "Retrieved evidence" in response
+    assert "This answer is incomplete" in response
+    assert "length limit" not in response and "has been kept" not in response
+    assert warning in window.activity_view.toPlainText()
+    assert len(window.findChildren(MessageCard)) == 3
+    assert window.status.text() == "Partial answer available"

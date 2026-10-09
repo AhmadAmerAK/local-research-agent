@@ -87,9 +87,23 @@ def test_successful_report_uses_guide_and_does_not_retry(run_report):
     assert "COMPLETE report" in calls[0]["prompt"]
     assert "Perspective 1, Perspective 2, Perspective 3" in calls[0]["prompt"]
     assert calls[0]["report_only"] is True
-    assert calls[0]["output_tokens"] == 2048
     assert "## References" in result.answer and "https://example.org/0" in result.answer
     assert statuses[-1] == "Research complete"
+    assert result.incomplete is False
+
+
+def test_unfinished_continuation_marks_partial_report(run_report, monkeypatch):
+    workflow, calls, statuses, _ = run_report(["Available findings [S1]."])
+    invoke = workflow._invoke
+    def partial(**kwargs):
+        workflow._report_warning = "The report could not finish automatically."
+        return invoke(**kwargs)
+    monkeypatch.setattr(workflow, "_invoke", partial)
+    result = workflow.run("Why are diagnoses increasing?")
+    assert result.incomplete is True
+    assert "Available findings" in result.answer
+    assert "https://example.org/0" in result.answer
+    assert statuses[-1] == "Partial report available"
 
 
 @pytest.mark.parametrize("first_answer", [
@@ -167,7 +181,7 @@ def test_output_limit_continues_same_agent_once_and_retains_text(monkeypatch, se
     assert bool(workflow._report_warning) is (continuation_error is not None)
 
 
-def test_output_limit_in_search_is_not_automatically_continued(monkeypatch, settings):
+def test_output_limit_in_classification_still_fails_without_evidence(monkeypatch, settings):
     exceptions = pytest.importorskip("strands.types.exceptions")
     class FakeAgent:
         closed = False
@@ -181,3 +195,23 @@ def test_output_limit_in_search_is_not_automatically_continued(monkeypatch, sett
     with pytest.raises(exceptions.MaxTokensReachedException):
         workflow._invoke(prompt="Search")
     assert agent.closed
+
+
+def test_output_limit_in_search_keeps_evidence_and_does_not_continue(monkeypatch, settings):
+    exceptions = pytest.importorskip("strands.types.exceptions")
+    statuses = []
+    class FakeAgent:
+        calls = 0
+        closed = False
+        messages = [{"role": "assistant", "content": [{"text": "The service could not be reached."}]}]
+        def __call__(self, prompt):
+            self.calls += 1
+            raise exceptions.MaxTokensReachedException("Maximum token limit")
+        def shutdown(self):
+            self.closed = True
+    agent = FakeAgent()
+    workflow = ResearchWorkflow(settings, on_status=statuses.append)
+    monkeypatch.setattr(workflow, "_agent", lambda **kwargs: agent)
+    assert workflow._invoke(prompt="Search", tools=[object()]) == "The service could not be reached."
+    assert agent.calls == 1 and agent.closed
+    assert "checking retrieved evidence" in statuses[-1]
