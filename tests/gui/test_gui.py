@@ -90,7 +90,8 @@ def test_academic_milestone_streaming_and_responsive(qtbot, make_window):
     assert "S99" not in window.answer_card.body.toPlainText()
     assert "https://example.org/study" in window.answer_card.body.toHtml()
     assert "Limited evidence" in window.activity_view.toPlainText()
-    assert len(window.findChildren(MessageCard)) == 4
+    assert len(window.findChildren(MessageCard)) == 3
+    assert "Limited evidence" in window.answer_card.body.toPlainText()
     assert window.status.text() == "Research complete"
 
 
@@ -219,3 +220,44 @@ def test_widget_callbacks_run_on_main_thread(qtbot, make_window):
     send(qtbot, window)
     qtbot.waitUntil(lambda: window.worker is None)
     assert observed == [main_thread]
+
+
+@pytest.mark.parametrize("token_limit", [True, False])
+def test_failed_stream_preserves_partial_response_in_one_card(qtbot, make_window, token_limit):
+    def factory(status, text, activity):
+        class FailingWorkflow:
+            def run(self, question):
+                text("## Findings\nThe report generated so far.")
+                if token_limit:
+                    from strands.types.exceptions import MaxTokensReachedException
+                    raise MaxTokensReachedException("Maximum token limit")
+                raise ConnectionError("Connection interrupted")
+        return FailingWorkflow()
+    window = make_window(factory)
+    send(qtbot, window)
+    qtbot.waitUntil(lambda: window.worker is None)
+    response = window.answer_card.body.toPlainText()
+    assert "The report generated so far" in response
+    assert "has been kept" in response
+    assert "MaxTokensReachedException" not in response
+    assert len(window.findChildren(MessageCard)) == 3
+    qtbot.wait(100)  # A pending draft-render timer must not erase the explanation.
+    assert window.answer_card.body.toPlainText() == response
+
+
+def test_no_evidence_warning_does_not_create_another_response(qtbot, make_window):
+    def factory(*callbacks):
+        class NoEvidenceWorkflow:
+            def run(self, question):
+                return SimpleNamespace(
+                    answer="No sources were retrieved. Check your connection and try again.",
+                    route="academic", sources=[], warnings=["No evidence retrieved"],
+                    run_directory=None,
+                )
+        return NoEvidenceWorkflow()
+    window = make_window(factory)
+    send(qtbot, window)
+    qtbot.waitUntil(lambda: window.worker is None)
+    assert len(window.findChildren(MessageCard)) == 3
+    assert "No evidence retrieved" not in window.answer_card.body.toPlainText()
+    assert "No evidence retrieved" in window.activity_view.toPlainText()

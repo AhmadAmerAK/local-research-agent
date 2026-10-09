@@ -288,11 +288,14 @@ class ResearchWindow(QMainWindow):
                 if QUrl(s.url).scheme().lower() in {"http", "https"}}
         answer = re.sub(r"\[(S\d+)\](?!\()", lambda m: (
             f"[{m[1]}](<{urls[m[1]]}>)" if m[1] in urls else m[0]), answer)
+        for warning in result.warnings:
+            # Warnings belong to the response, never to a separate chat card.
+            # The no-evidence answer already explains this condition.
+            if not (not result.sources and warning == "No evidence retrieved"):
+                answer += "\n\n---\n\n**Note:** " + warning
+            self.log_activity(Activity("warning", warning))
         self.answer_card.set_text(answer, markdown=True)
         self.answer_card.findChild(QLabel, "role").setText("Research assistant")
-        for warning in result.warnings:
-            self.add_message("Research warning", warning)
-            self.log_activity(Activity("warning", warning))
         self.status.setText("Research complete")
         self.log_activity(Activity("research_completed", {
             "route": result.route, "sources": len(result.sources),
@@ -307,9 +310,17 @@ class ResearchWindow(QMainWindow):
     @pyqtSlot(str)
     def show_error(self, error):
         self.draft_timer.stop()
-        self.answer_card.set_text("Research failed.\n\n" + error)
+        token_limit = "maxtokensreachedexception" in error.lower() or "maximum token" in error.lower()
+        if token_limit:
+            message = "The response reached its length limit. The text generated so far has been kept."
+        elif self.draft:
+            message = "The response could not finish. The text generated so far has been kept; you can try again."
+        else:
+            message = "Research failed.\n\n" + error
+        retained = self.draft + "\n\n---\n\n" if self.draft else ""
+        self.answer_card.set_text(retained + message, markdown=True)
         self.answer_card.findChild(QLabel, "role").setText("Research assistant · error")
-        self.status.setText("Research failed — you can retry")
+        self.status.setText("Response length limit reached" if token_limit else "Research failed — you can retry")
         self.log_activity(Activity("error", error))
 
     @pyqtSlot()
