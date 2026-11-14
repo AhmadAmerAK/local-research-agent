@@ -304,14 +304,17 @@ class ResearchWindow(QMainWindow):
             # itself supplies evidence limitations and the research outcome.
             self.log_activity(Activity("warning", warning))
         incomplete = getattr(result, "incomplete", False)
-        if incomplete:
+        cancelled = getattr(result, "cancelled", False)
+        if incomplete and not cancelled:
             answer += "\n\n---\n\nThis answer is incomplete. Please try again for a full response."
         self.answer_card.set_text(answer, markdown=True)
         self.answer_card.findChild(QLabel, "role").setText("Research assistant")
         unavailable = result.route in {"academic", "general"} and not result.sources
-        self.status.setText("Research unavailable — please try again" if unavailable else
+        self.status.setText("Research cancelled" if cancelled else
+                            "Research unavailable — please try again" if unavailable else
                             "Partial answer available" if incomplete else "Research complete")
-        self.log_activity(Activity("research_unavailable" if unavailable else
+        self.log_activity(Activity("research_cancelled" if cancelled else
+                                   "research_unavailable" if unavailable else
                                    "research_incomplete" if incomplete else "research_completed", {
             "route": result.route, "sources": len(result.sources),
             "run_directory": result.run_directory,

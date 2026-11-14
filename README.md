@@ -1,44 +1,6 @@
 # Local Research Agent
 A simple locally hosted Research Agent that performs a research query and returns back a summarised cited result.
 
-## Run the application
-
-```bash
-agent-env.venv/bin/python src/gui/gui_main.py
-```
-
-For the command-line interface:
-
-```bash
-agent-env.venv/bin/python src/main.py "Research markerless gait analysis"
-```
-
-Use your activated environment's `python` instead if you followed the `.venv` installation below.
-
-Each GUI window owns one background worker and one Strands research agent. Follow-up questions
-reuse its conversation and evidence. Starting a new application creates an isolated session;
-previous saved research does not automatically enter its context.
-
-The agent selects its research route each turn. Python exposes only that route's search provider
-and enforces a per-question search budget of `MAX_SEARCH_QUERIES * MAX_RESEARCH_ROUNDS`.
-There is no Python search-round loop. Detailed `AGENTS.md` rules and existing skills are loaded
-on demand; essential scope, citation and provider rules always apply.
-
-Evidence and original provider responses are saved under `src/agent/memory/runs/<session-id>/`.
-Individual answers are saved in its `turns/` subdirectory. Native context reduction can compact
-conversation history; the agent can still retrieve original evidence in pages using stable source IDs.
-Closing the window requests cancellation and waits for the worker to close its session safely.
-An in-flight research HTTP request may need to reach its existing timeout before shutdown completes.
-
-## Tests
-
-```bash
-QT_QPA_PLATFORM=offscreen agent-env.venv/bin/python -m pytest tests -q
-```
-
-The regression suite uses the installed Strands loop with scripted model responses and mocked
-providers; it does not require live Ollama inference or consume research API credits.
-
 ## Installation
 
 ### Prerequisites
@@ -101,3 +63,52 @@ python -m pip install --upgrade pip
 # Install dependencies
 pip install -r requirements.txt
 ```
+
+## Run the application
+
+```bash
+agent-env.venv/bin/python src/gui/gui_main.py
+```
+
+For the command-line interface:
+
+```bash
+agent-env.venv/bin/python src/main.py "Research the rise in ADHD diagnosis"
+```
+
+Use your activated environment's `python` instead if you followed the `.venv` installation below.
+
+Each GUI window owns one background worker and one Strands research agent. Follow-up questions
+reuse its conversation and evidence. Starting a new application creates an isolated session;
+previous saved research does not automatically enter its context.
+
+The agent selects its research route each turn. Python exposes only that route's search provider
+and enforces a per-question search budget of `MAX_SEARCH_QUERIES * MAX_RESEARCH_ROUNDS`.
+There is no Python search-round loop. Detailed `AGENTS.md` rules and existing skills are loaded
+on demand; essential scope, citation and provider rules always apply.
+
+Evidence and original provider responses are saved under `src/agent/memory/runs/<session-id>/`.
+Individual answers are saved in its `turns/` subdirectory. Native context reduction can compact
+conversation history; the agent can still retrieve original evidence in pages using stable source IDs.
+Closing the window requests cancellation and waits for the worker to close its session safely.
+In-flight HTTP requests and retry waits cooperate with cancellation; request deadlines also bound stalls.
+
+## Tests
+
+```bash
+QT_QPA_PLATFORM=offscreen agent-env.venv/bin/python -m pytest tests -q
+```
+
+The regression suite uses the installed Strands loop with scripted model responses and mocked
+providers; it does not require live Ollama inference or consume research API credits.
+
+## Reliability checks
+
+Requests have explicit timeouts and cooperative cancellation, including stalled Ollama
+streams. Reports also check sentence-sized claims against original retrieved evidence,
+label conflicts and uncertainty in the same response, and save the checks as `grounding.json`.
+These conservative checks do not establish semantic correctness of paraphrased claims.
+
+See [Phase 2.5 verification and limitations](docs/phase-2.5-reliability.md) for measured
+shutdown behaviour, the grounding evaluation, and reproduction commands. Session restoration
+after restarting the application remains out of scope.

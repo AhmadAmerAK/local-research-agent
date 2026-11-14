@@ -200,8 +200,12 @@ def test_links_only_open_web_urls(monkeypatch):
     assert opened == ["https://example.org/study"]
 
 
-def test_gui_adapter_forwards_session_events():
+def test_gui_adapter_forwards_session_events(monkeypatch):
     from agent.orchestrator import ResearchWorkflow
+    # Adapter wiring must not depend on a developer's local .env values.
+    for key, value in {"MAX_RESEARCH_ROUNDS": "1", "MAX_SOURCES": "5",
+                       "MIN_REQUIRED_SOURCES": "3", "CONTEXT_WINDOW": "8192"}.items():
+        monkeypatch.setenv(key, value)
     activities, streamed = [], []
     workflow = default_workflow_factory(lambda _: None, streamed.append, activities.append)
     assert type(workflow) is ResearchWorkflow

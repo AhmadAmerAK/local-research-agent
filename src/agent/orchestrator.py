@@ -1,8 +1,9 @@
 """One bounded Strands research agent and evidence store per application session."""
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 import asyncio
 from datetime import datetime, timezone
 import json
+from pathlib import Path
 import re
 from threading import Event, Lock
 from typing import Callable, Literal
@@ -12,6 +13,8 @@ from .config import AGENT_DIR, Settings
 from .evidence import EvidenceStore, Source, parse_citations
 from .report_validation import prepare_report, validate_report
 from .tools import ResearchTools
+from .inference import CancellableOllamaModel, OLLAMA_HTTP_TIMEOUT
+from .grounding import annotate_grounding, check_claims
 
 CAPABILITY_REPLY = (
     "I am a research agent. I can search academic publications or the general web "
@@ -46,6 +49,8 @@ class ResearchResult:
     warnings: list[str]
     run_directory: str | None = None
     incomplete: bool = False
+    cancelled: bool = False
+    grounding: list = field(default_factory=list)
 
 
 def _read_guide() -> str:
@@ -78,11 +83,13 @@ class ResearchWorkflow:
         self._partial_warning = None
         self._validation_retries = 0
         self._model_calls = 0
+        self._cancelled = False
 
     def _model(self, output_tokens: int = 1024):
-        from strands.models.ollama import OllamaModel
-        return OllamaModel(
+        return CancellableOllamaModel(
             host=self.config.ollama_host, model_id=self.config.ollama_model,
+            cancel_event=self.cancel_event,
+            ollama_client_args={"timeout": OLLAMA_HTTP_TIMEOUT},
             context_window_limit=self.config.context_window,
             options={"num_ctx": self.config.context_window},
             temperature=0.15, max_tokens=output_tokens, keep_alive="5m",
@@ -98,6 +105,7 @@ class ResearchWorkflow:
         self.store = EvidenceStore(AGENT_DIR / "memory" / "runs" / session_id)
         self.search = ResearchTools(self.config, self.store, self.on_status)
         self.search.enforce_route = True
+        self.search.cancel_event = self.cancel_event
         self.agent = self._agent()
         self._runner = asyncio.Runner()
 
@@ -285,6 +293,9 @@ class ResearchWorkflow:
             result = self._runner.run(self.agent.invoke_async(
                 question, limits={"turns": limit}, cancel_signal=self.cancel_event))
         except MaxTokensReachedException:
+            if self.cancel_event.is_set():
+                self._cancelled = True
+                return self._prefix + self._text
             self._prefix = self._text
             self.on_status("Continuing answer generation")
             try:
@@ -295,7 +306,8 @@ class ResearchWorkflow:
                 ))
                 if result.stop_reason != "end_turn":
                     self._partial_warning = f"Agent stopped: {result.stop_reason}."
-                return self._prefix + str(result)
+                self._cancelled = result.stop_reason == "cancelled" or self.cancel_event.is_set()
+                return self._prefix + (self._text if self._cancelled else str(result))
             except MaxTokensReachedException:
                 self._partial_warning = "The answer reached its output limit after one continuation."
                 return self._prefix + self._text
@@ -305,6 +317,9 @@ class ResearchWorkflow:
                 return self._prefix + self._text
         if result.stop_reason != "end_turn":
             self._partial_warning = f"Agent stopped: {result.stop_reason}."
+        self._cancelled = result.stop_reason == "cancelled" or self.cancel_event.is_set()
+        if self._cancelled:
+            return self._prefix + self._text
         return str(result)
 
     def _record(self, question, result):
@@ -323,6 +338,38 @@ class ResearchWorkflow:
         if result.route in {"academic", "general"}:
             self._previous_route = result.route
 
+    def _save_result(self, result):
+        directory = Path(result.run_directory)
+        (directory / "report.md").write_text(result.answer + "\n", encoding="utf-8")
+        (directory / "warnings.json").write_text(json.dumps(result.warnings, indent=2), encoding="utf-8")
+        (directory / "sources.json").write_text(json.dumps([asdict(s) for s in result.sources], indent=2), encoding="utf-8")
+        (directory / "grounding.json").write_text(json.dumps([asdict(c) for c in result.grounding], indent=2), encoding="utf-8")
+
+    def _cancelled_result(self, question, narrative):
+        directory = self.store.directory / "turns" / f"{len(self._turns) + 1:04d}"
+        directory.mkdir(parents=True, exist_ok=True)
+        cited = set(parse_citations(narrative))
+        selected = [source for source in self._available_sources()
+                    if f"[{source.source_id}]" in cited][:self.config.max_sources]
+        # Planning text and uncited interrupted model output are not a research report.
+        answer = narrative if selected else "Research was cancelled. You can ask the question again."
+        grounding = []
+        if selected:
+            allowed = {f"[{source.source_id}]" for source in selected}
+            for citation in cited - allowed:
+                answer = answer.replace(citation, "[UNVERIFIED]")
+            grounding = check_claims(answer, self.store, {source.source_id for source in selected})
+            answer = annotate_grounding(answer, grounding)
+            self._event("citation_grounding", [asdict(check) for check in grounding])
+            answer += "\n\nResearch was cancelled before this answer could be completed or fully checked."
+            answer += "\n\n## References\n" + "\n".join(f"- [{s.source_id}] {s.title}. {s.url}" for s in selected)
+        result = ResearchResult(self.route or "cancelled", answer, selected, ["Research cancelled"],
+                                str(directory), incomplete=True, cancelled=True, grounding=grounding)
+        self._save_result(result)
+        self._record(question, result)
+        self.on_status("Research cancelled")
+        return result
+
     def run(self, question: str) -> ResearchResult:
         if not self._run_lock.acquire(blocking=False):
             raise RuntimeError("A research turn is already running.")
@@ -335,6 +382,7 @@ class ResearchWorkflow:
             self._follow_up = False
             self._prefix = self._text = ""
             self._partial_warning = None
+            self._cancelled = False
             self._validation_retries = self._model_calls = 0
             self._sync_provider()
             fixed = self.classify(question)
@@ -346,6 +394,8 @@ class ResearchWorkflow:
                 self._record(question, result)
                 return result
             narrative = prepare_report(self._invoke_turn(question))
+            if self._cancelled or self.cancel_event.is_set():
+                return self._cancelled_result(question, narrative)
             if self.route in {"capabilities", "out_of_scope"}:
                 answer = CAPABILITY_REPLY if self.route == "capabilities" else OUT_OF_SCOPE_REPLY
                 result = ResearchResult(self.route, answer, [], [])
@@ -377,6 +427,16 @@ class ResearchWorkflow:
                 for cid in cited:
                     if cid[1:-1] not in selected_ids:
                         narrative = narrative.replace(cid, "[UNVERIFIED]")
+                grounding = check_claims(narrative, self.store, selected_ids)
+                self._event("citation_grounding", [asdict(check) for check in grounding])
+                conflicts = sum(check.status == "unsupported" for check in grounding)
+                uncertain = sum(check.status == "unverifiable" for check in grounding)
+                if conflicts:
+                    issues.append(f"{conflicts} claims conflict with the cited original evidence.")
+                if uncertain:
+                    warnings.append(f"Evidence support could not be verified for {uncertain} claims; "
+                                    "these may include valid paraphrases.")
+                narrative = annotate_grounding(narrative, grounding)
                 warnings.extend("Report validation: " + issue for issue in issues)
                 if self._partial_warning:
                     warnings.append(self._partial_warning)
@@ -386,10 +446,8 @@ class ResearchWorkflow:
                     f"- [{s.source_id}] {s.title} ({s.year or s.published_date or 'n.d.'}). {s.url}" for s in selected)
                 answer = narrative + "\n\n## References\n" + references
                 result = ResearchResult(self.route, answer, selected, warnings, str(directory),
-                                        incomplete=bool(issues or self._partial_warning))
-            (directory / "report.md").write_text(result.answer + "\n", encoding="utf-8")
-            (directory / "warnings.json").write_text(json.dumps(result.warnings, indent=2), encoding="utf-8")
-            (directory / "sources.json").write_text(json.dumps([asdict(s) for s in result.sources], indent=2), encoding="utf-8")
+                                        incomplete=bool(issues or self._partial_warning), grounding=grounding)
+            self._save_result(result)
             self._record(question, result)
             self.on_status("No research evidence available" if not result.sources else
                            "Partial report available" if result.incomplete else "Research complete")
@@ -405,7 +463,10 @@ class ResearchWorkflow:
                 self._closed = True
                 if self.agent is not None:
                     try:
-                        self._runner.run(self.agent.shutdown_async())
+                        async def shutdown():
+                            async with asyncio.timeout(5):
+                                await self.agent.shutdown_async()
+                        self._runner.run(shutdown())
                     finally:
                         self._runner.close()
         finally:

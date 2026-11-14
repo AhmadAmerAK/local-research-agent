@@ -1,16 +1,22 @@
 """Custom Bounded OpenAlex/Tavily HTTP tools"""
+import asyncio
 import json
 import logging
 import time
 from typing import Callable
-from threading import RLock
+from threading import Event, RLock
 
 import httpx
 
 from .config import Settings
 from .evidence import EvidenceStore, normalise_openalex, normalise_tavily
+from .cancellation import RequestCancelled, cancellable
 
 LOGGER = logging.getLogger(__name__)
+PROVIDER_TIMEOUT = httpx.Timeout(connect=5, read=10, write=10, pool=5)
+PROVIDER_DEADLINE = 30.0
+OPENALEX_URL = "https://api.openalex.org/works"
+TAVILY_URL = "https://api.tavily.com/search"
 
 
 class ResearchAPIError(RuntimeError):
@@ -21,7 +27,7 @@ def _request(client: httpx.Client, method: str, url: str, **kwargs) -> dict:
     """Retry transient failures without leaking credentials to the model or logs."""
     for attempt in range(3):
         try:
-            response = client.request(method, url, timeout=25.0, **kwargs)
+            response = client.request(method, url, timeout=PROVIDER_TIMEOUT, **kwargs)
             if response.status_code in (429, 500, 502, 503, 504) and attempt < 2:
                 time.sleep(0.5 * (2 ** attempt))
                 continue
@@ -40,9 +46,7 @@ def _request(client: httpx.Client, method: str, url: str, **kwargs) -> dict:
     raise ResearchAPIError("Research provider unavailable")
 
 
-def openalex_search(query: str, key: str, count: int = 5,
-                    client: httpx.Client | None = None) -> list[dict]:
-    """GET /works?search=...; decode abstracts separately in evidence.py."""
+def _openalex_request(query, key, count):
     params = {
         "search": query,
         "per_page": min(max(count, 1), 25),
@@ -51,23 +55,10 @@ def openalex_search(query: str, key: str, count: int = 5,
     headers = {"Accept": "application/json"}
     if key:
         headers["Authorization"] = f"Bearer {key}"
-    owned = client is None
-    client = client or httpx.Client()
-    try:
-        result = _request(client, "GET", "https://api.openalex.org/works",
-                          params=params, headers=headers)
-        works = result.get("results", [])
-        if not isinstance(works, list):
-            raise ResearchAPIError("Malformed OpenAlex results")
-        return [w for w in works if isinstance(w, dict)]
-    finally:
-        if owned:
-            client.close()
+    return "GET", OPENALEX_URL, {"params": params, "headers": headers}
 
 
-def tavily_search(query: str, key: str, count: int = 5,
-                  client: httpx.Client | None = None) -> list[dict]:
-    """POST /search using the basic, lower-credit Tavily search."""
+def _tavily_request(query, key, count):
     if not key:
         raise ResearchAPIError("TAVILY_API_KEY is missing (required for general web research)")
     payload = {
@@ -80,20 +71,81 @@ def tavily_search(query: str, key: str, count: int = 5,
         "include_raw_content": False,
         "include_images": False,
     }
+    return "POST", TAVILY_URL, {"json": payload, "headers": {
+        "Authorization": f"Bearer {key}", "Content-Type": "application/json"}}
+
+
+def _results(data, provider):
+    results = data.get("results", [])
+    if not isinstance(results, list):
+        raise ResearchAPIError(f"Malformed {provider} results")
+    return [item for item in results if isinstance(item, dict)]
+
+
+def _search_sync(request, provider, client):
     owned = client is None
     client = client or httpx.Client()
     try:
-        result = _request(client, "POST", "https://api.tavily.com/search",
-                          json=payload,
-                          headers={"Authorization": f"Bearer {key}",
-                                   "Content-Type": "application/json"})
-        hits = result.get("results", [])
-        if not isinstance(hits, list):
-            raise ResearchAPIError("Malformed Tavily results")
-        return [r for r in hits if isinstance(r, dict)]
+        method, url, kwargs = request
+        return _results(_request(client, method, url, **kwargs), provider)
     finally:
         if owned:
             client.close()
+
+
+def openalex_search(query: str, key: str, count: int = 5,
+                    client: httpx.Client | None = None) -> list[dict]:
+    """Compatibility API; native agent tools use the cancellable async version."""
+    return _search_sync(_openalex_request(query, key, count), "OpenAlex", client)
+
+
+def tavily_search(query: str, key: str, count: int = 5,
+                  client: httpx.Client | None = None) -> list[dict]:
+    return _search_sync(_tavily_request(query, key, count), "Tavily", client)
+
+
+async def _request_async(client, method, url, **kwargs):
+    for attempt in range(3):
+        try:
+            response = await client.request(method, url, timeout=PROVIDER_TIMEOUT, **kwargs)
+            if response.status_code in (429, 500, 502, 503, 504) and attempt < 2:
+                await asyncio.sleep(.5 * 2 ** attempt)
+                continue
+            if response.status_code >= 400:
+                raise ResearchAPIError(f"Research provider returned HTTP {response.status_code}")
+            data = response.json()
+            if not isinstance(data, dict):
+                raise ResearchAPIError("Unexpected research provider response")
+            return data
+        except (httpx.TimeoutException, httpx.TransportError) as exc:
+            if attempt == 2:
+                raise ResearchAPIError("Research service unreachable or timed out") from exc
+            await asyncio.sleep(.5 * 2 ** attempt)
+        except ValueError as exc:
+            raise ResearchAPIError("Research provider returned invalid JSON") from exc
+
+
+async def _search_async(request, provider, client, cancel_event):
+    owned = client is None
+    client = client or httpx.AsyncClient()
+    try:
+        method, url, kwargs = request
+        async with asyncio.timeout(PROVIDER_DEADLINE):
+            data = await cancellable(_request_async(client, method, url, **kwargs), cancel_event)
+        return _results(data, provider)
+    except TimeoutError as exc:
+        raise ResearchAPIError("Research service unreachable or timed out") from exc
+    finally:
+        if owned:
+            await client.aclose()
+
+
+async def openalex_search_async(query, key, count=5, client=None, cancel_event=None):
+    return await _search_async(_openalex_request(query, key, count), "OpenAlex", client, cancel_event)
+
+
+async def tavily_search_async(query, key, count=5, client=None, cancel_event=None):
+    return await _search_async(_tavily_request(query, key, count), "Tavily", client, cancel_event)
 
 
 class ResearchTools:
@@ -111,6 +163,7 @@ class ResearchTools:
         self.active_route: str | None = None
         self.disclosed_ids: set[str] = set()
         self._budget_lock = RLock()
+        self.cancel_event = Event()
         self.on_status = on_status or (lambda _: None)
 
     def start_round(self) -> None:
@@ -129,45 +182,77 @@ class ResearchTools:
             return self._search_permitted(provider, query)
 
     def _search_permitted(self, provider: str, query: str) -> str:
+        prepared = self._prepare_search(provider, query)
+        if isinstance(prepared, dict):
+            return json.dumps(prepared)
+        query = prepared
+        try:
+            count = self.settings.max_sources
+            search = openalex_search if provider == "openalex" else tavily_search
+            key = self.settings.openalex_api_key if provider == "openalex" else self.settings.tavily_api_key
+            return self._persist(provider, query, search(query, key, count, self.client))
+        except ResearchAPIError as exc:
+            return self._provider_error(provider, exc)
+
+    def _prepare_search(self, provider, query):
+        if self.cancel_event.is_set():
+            return {"error": "Research cancelled", "provider": provider}
         if self.enforce_route and provider != {"academic": "openalex", "general": "tavily"}.get(self.active_route):
-            return json.dumps({"error": "Provider not permitted for this turn", "provider": provider})
+            return {"error": "Provider not permitted for this turn", "provider": provider}
         if self.provider_errors:
-            return json.dumps({"error": self.provider_errors[-1], "provider": provider})
+            return {"error": self.provider_errors[-1], "provider": provider}
         query = " ".join(query.split()).strip()[:300]
         if not query:
-            return json.dumps({"error": "Search query cannot be blank"})
+            return {"error": "Search query cannot be blank"}
         if ((not self.enforce_route and self.used_this_round >= self.settings.max_search_queries) or
                 self.used_queries >= self.settings.max_search_queries * self.settings.max_research_rounds):
-            return json.dumps({"error": "Search budget exceeded"})
+            return {"error": "Search budget exceeded"}
         self.used_queries += 1
         self.used_this_round += 1
         self.queries.append(query)
         self.on_status(f"Searching {provider}: {query}")
+        return query
+
+    async def search_async(self, provider, query, cancel_event=None):
+        """Async native tool: no sync HTTP executor survives application shutdown."""
+        signal = cancel_event if cancel_event is not None else self.cancel_event
+        with self._budget_lock:
+            prepared = self._prepare_search(provider, query)
+        if isinstance(prepared, dict):
+            return json.dumps(prepared)
         try:
-            # Fetch several records, present a small set per call to the model.
-            count = self.settings.max_sources
-            if provider == "openalex":
-                raw = openalex_search(query, self.settings.openalex_api_key, count, self.client)
-                normalized = [normalise_openalex(x) for x in raw]
-            else:
-                raw = tavily_search(query, self.settings.tavily_api_key, count, self.client)
-                normalized = [normalise_tavily(x) for x in raw]
+            search = openalex_search_async if provider == "openalex" else tavily_search_async
+            key = self.settings.openalex_api_key if provider == "openalex" else self.settings.tavily_api_key
+            raw = await search(prepared, key, self.settings.max_sources, cancel_event=signal)
+            # A received response is committed without an await between raw data
+            # and IDs. Cancellation cannot leave half a successful tool result.
+            return self._persist(provider, prepared, raw)
+        except RequestCancelled:
+            return json.dumps({"error": "Research cancelled", "provider": provider})
+        except ResearchAPIError as exc:
+            return self._provider_error(provider, exc)
+
+    def _persist(self, provider, query, raw):
+        normalize = normalise_openalex if provider == "openalex" else normalise_tavily
+        normalized = [normalize(x) for x in raw]
+        with self._budget_lock:
             self.store.save_raw(provider, query, raw)
             for item in normalized:
                 if item is not None:
                     item.query = query
             added = self.store.add([x for x in normalized if x is not None])
             self.disclosed_ids.update(item.source_id for item in added)
-            self.on_status(f"Collected {len(added)} new sources ({len(self.store.sources)} total)")
-            return json.dumps({"provider": provider, "query": query, "new_sources": [
-                {"id": item.source_id, "title": item.title, "url": item.url,
-                 "snippet": item.snippet[:700]} for item in added
-            ]}, ensure_ascii=False)
-        except ResearchAPIError as exc:
-            self.provider_errors.append(str(exc))
-            LOGGER.warning("%s search failed: %s", provider, exc)
-            self.on_status(str(exc))
-            return json.dumps({"error": str(exc), "provider": provider})
+        self.on_status(f"Collected {len(added)} new sources ({len(self.store.sources)} total)")
+        return json.dumps({"provider": provider, "query": query, "new_sources": [
+            {"id": item.source_id, "title": item.title, "url": item.url,
+             "snippet": item.snippet[:700]} for item in added
+        ]}, ensure_ascii=False)
+
+    def _provider_error(self, provider, exc):
+        self.provider_errors.append(str(exc))
+        LOGGER.warning("%s search failed: %s", provider, exc)
+        self.on_status(str(exc))
+        return json.dumps({"error": str(exc), "provider": provider})
 
     def search_papers(self, query: str) -> str:
         return self._search("openalex", query)
@@ -177,7 +262,7 @@ class ResearchTools:
 
     def strand_tools(self, route: str) -> list:
         # Register exactly ONE provider so the model cannot override Python's routing.
-        from strands import tool
+        from strands import tool, ToolContext
 
         def framework_result(payload: str):
             if "error" in json.loads(payload):
@@ -185,15 +270,15 @@ class ResearchTools:
             return payload
 
         if route == "academic":
-            @tool
-            def search_papers(query: str) -> str | dict:
+            @tool(context=True)
+            async def search_papers(query: str, tool_context: ToolContext) -> str | dict:
                 """Search OpenAlex scientific/academic publications by topic or question."""
-                return framework_result(self.search_papers(query))
+                return framework_result(await self.search_async("openalex", query, tool_context.cancel_signal))
             return [search_papers]
         if route == "general":
-            @tool
-            def search_web(query: str) -> str | dict:
+            @tool(context=True)
+            async def search_web(query: str, tool_context: ToolContext) -> str | dict:
                 """Search the general web through Tavily for evidence-backed research."""
-                return framework_result(self.search_web(query))
+                return framework_result(await self.search_async("tavily", query, tool_context.cancel_signal))
             return [search_web]
         return []

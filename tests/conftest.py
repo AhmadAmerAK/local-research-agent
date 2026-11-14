@@ -94,6 +94,15 @@ def make_session(monkeypatch, tmp_path):
     monkeypatch.setattr(tools, "openalex_search", papers)
     monkeypatch.setattr(tools, "tavily_search", web)
 
+    async def academic(query, key, count=5, client=None, cancel_event=None):
+        return tools.openalex_search(query, key, count, client)
+
+    async def general(query, key, count=5, client=None, cancel_event=None):
+        return tools.tavily_search(query, key, count, client)
+
+    monkeypatch.setattr(tools, "openalex_search_async", academic)
+    monkeypatch.setattr(tools, "tavily_search_async", general)
+
     def make(steps, *, skills=False, searches=2, rounds=2):
         if skills and not (tmp_path / "guide").exists():
             shutil.copytree(guide_dir, tmp_path / "guide")
