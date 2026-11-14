@@ -12,6 +12,13 @@ from agent import orchestrator
 from agent.orchestrator import ReportGenerationError, ResearchWorkflow
 
 
+VALID_REPORT = (
+    "## Perspective 1\nFirst evidence [S1].\n"
+    "## Perspective 2\nSecond evidence [S2].\n"
+    "## Perspective 3\nThird evidence [S3]."
+)
+
+
 @pytest.fixture
 def settings():
     return Settings("", "", "http://localhost:11434", "qwen3:4b-instruct",
@@ -52,7 +59,7 @@ def run_report(monkeypatch, tmp_path, settings):
     monkeypatch.setattr(orchestrator, "AGENT_DIR", tmp_path)
     monkeypatch.setattr(orchestrator, "_read_guide", lambda: guide)
 
-    def run(answers):
+    def run(answers, source_count=4):
         calls, statuses = [], []
         workflow = ResearchWorkflow(settings, on_status=statuses.append)
         monkeypatch.setattr(workflow, "classify", lambda question: "academic")
@@ -60,7 +67,7 @@ def run_report(monkeypatch, tmp_path, settings):
         def search(route, question, tools, round_number):
             tools.store.add([
                 Source("", "openalex", f"Study {i}", f"https://example.org/{i}",
-                       "Retrieved evidence", []) for i in range(4)
+                       "Retrieved evidence", []) for i in range(source_count)
             ])
 
         monkeypatch.setattr(workflow, "_search_round", search)
@@ -113,7 +120,9 @@ def test_unfinished_continuation_marks_partial_report(run_report, monkeypatch):
     "Let’s begin.\n## References\n[S1] Study 0",
 ])
 def test_citation_free_or_invalid_answer_retries_once(run_report, first_answer):
-    workflow, calls, statuses, _ = run_report([first_answer, "A completed report [S1] [S2] [S3]."])
+    workflow, calls, statuses, _ = run_report([first_answer,
+        "A completed report.\n## Perspective 1\nFirst evidence [S1].\n"
+        "## Perspective 2\nSecond evidence [S2].\n## Perspective 3\nThird evidence [S3]."])
     result = workflow.run("Why are diagnoses increasing?")
     assert len(calls) == 2
     assert "CORRECTION" in calls[1]["prompt"]
@@ -134,6 +143,68 @@ def test_two_uncited_answers_fail_and_preserve_evidence(run_report):
     assert (run_dir / "sources.json").is_file()
     assert not (run_dir / "report.md").exists()
     assert "Report generation failed" in json.loads((run_dir / "warnings.json").read_text())[0]
+
+
+@pytest.mark.parametrize("first_answer", [
+    "A report with a single valid citation [S1].",
+    "A report with three citations but no perspectives [S1, S2, S3].",
+    VALID_REPORT.replace("Second evidence [S2].", "Second evidence."),
+    VALID_REPORT.replace("[S1]", "[S1, S999]"),
+    VALID_REPORT.replace("[S1]", "[S1, S4]"),
+])
+def test_report_validation_retries_structural_and_citation_errors(run_report, first_answer):
+    workflow, calls, statuses, _ = run_report([first_answer, VALID_REPORT])
+    result = workflow.run("Research question")
+    assert len(calls) == 2
+    assert "CORRECTION" in calls[1]["prompt"]
+    assert result.incomplete is False
+    assert "[S999]" not in result.answer and "[S4]" not in result.answer
+    assert statuses[-1] == "Research complete"
+
+
+def test_invalid_report_after_retry_is_saved_as_incomplete(run_report):
+    workflow, calls, statuses, _ = run_report(["One cited finding [S1]."] * 2)
+    result = workflow.run("Research question")
+    assert len(calls) == 2
+    assert result.incomplete is True
+    assert "One cited finding" in result.answer
+    assert any("Missing Perspective" in warning for warning in result.warnings)
+    assert statuses[-1] == "Partial report available"
+    assert "Research complete" not in statuses
+    assert Path(result.run_directory, "report.md").read_text().strip() == result.answer
+    assert json.loads(Path(result.run_directory, "warnings.json").read_text()) == result.warnings
+
+
+def test_invalid_grouped_citation_is_marked_and_never_referenced(run_report):
+    malformed = VALID_REPORT.replace("[S1]", "[S1, S999]")
+    workflow, calls, statuses, _ = run_report([malformed] * 2)
+    result = workflow.run("Research question")
+    assert len(calls) == 2 and result.incomplete is True
+    assert "[UNVERIFIED]" in result.answer
+    assert "[S999]" not in result.answer
+    assert "[S1]" in result.answer.split("## References")[1]
+    assert any("[S999]" in warning for warning in result.warnings)
+
+
+def test_grouped_citations_generate_canonical_references_without_retry(run_report):
+    grouped = VALID_REPORT.replace("[S1]", "[S1, S2]")
+    workflow, calls, statuses, _ = run_report([grouped])
+    result = workflow.run("Research question")
+    assert len(calls) == 1 and not result.incomplete
+    assert "[S1] [S2]" in result.answer
+    assert "[S1, S2]" not in result.answer
+    for source in result.sources:
+        assert result.answer.count(f"- [{source.source_id}]") == 1
+
+
+def test_insufficient_evidence_returns_partial_report_without_pointless_retry(run_report):
+    workflow, calls, statuses, _ = run_report(["Available finding [S1]. Evidence is limited."], source_count=1)
+    result = workflow.run("Research question")
+    assert len(calls) == 1
+    assert result.incomplete is True
+    assert any("insufficient evidence" in warning for warning in result.warnings)
+    assert "Available finding" in result.answer
+    assert statuses[-1] == "Partial report available"
 
 
 @pytest.mark.parametrize("continuation_error", [None, "limit", "connection"])

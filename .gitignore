@@ -225,3 +225,5 @@ __marimo__/
 # Coding Agent
 .codex/
 
+# Memory runs
+src/agent/memory/runs/*

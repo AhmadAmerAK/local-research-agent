@@ -9,6 +9,7 @@ from uuid import uuid4
 from .config import AGENT_DIR, Settings
 from .evidence import EvidenceStore, Source
 from .tools import ResearchTools
+from .report_validation import prepare_report, validate_report
 
 CAPABILITY_REPLY = (
     "I am a research agent. I can search academic publications or the general web "
@@ -299,9 +300,10 @@ class ResearchWorkflow:
         for attempt in range(2):
             prompt = report_prompt
             if attempt:
-                self.on_status("Retrying report generation: no valid citations in the first answer")
+                self.on_status("Retrying report generation: report validation failed")
                 prompt += (
-                    "\n\nCORRECTION: Your previous answer contained no valid source citations. "
+                    "\n\nCORRECTION: Fix these problems in your previous answer:\n- "
+                    + "\n- ".join(validation_issues) + "\n"
                     "Return the completed evidence-based report, not a promise or tool explanation. "
                     "Use the supplied source IDs in separate brackets, for example [S1]."
                 )
@@ -311,12 +313,13 @@ class ResearchWorkflow:
                 stream_text=True, report_only=True,
             )
             # Model-generated reference lists must not substitute for narrative citations.
-            narrative = re.split(r"(?im)^#{0,3}\s*References\s*$", narrative, maxsplit=1)[0].rstrip()
+            narrative = prepare_report(narrative)
             cited, invalid = store.validate_citations(narrative)
             cited_ids = [cid[1:-1] for cid in cited if cid[1:-1] in valid_ids]
-            if cited_ids:
+            validation_issues = validate_report(narrative, valid_ids)
+            if not validation_issues or (cited_ids and (self._report_warning or len(selected) < 3)):
                 break
-        else:
+        if not cited_ids:
             message = "Report generation failed: the model returned no valid evidence citations after two attempts."
             warnings.append(message)
             (run_dir / "warnings.json").write_text(json.dumps(warnings, indent=2), encoding="utf-8")
@@ -326,6 +329,7 @@ class ResearchWorkflow:
         invalid = list(dict.fromkeys(invalid + [cid for cid in cited if cid[1:-1] not in valid_ids]))
         if self._report_warning:
             warnings.append(self._report_warning)
+        warnings.extend("Report validation: " + issue for issue in validation_issues)
         if invalid:
             warnings.append("Model used invalid source IDs: " + ", ".join(invalid))
             for item in invalid:
@@ -339,6 +343,7 @@ class ResearchWorkflow:
         report = narrative + "\n\n## References\n" + (refs or "No valid references cited.")
         (run_dir / "report.md").write_text(report + "\n", encoding="utf-8")
         (run_dir / "warnings.json").write_text(json.dumps(warnings, indent=2), encoding="utf-8")
-        self.on_status("Partial report available" if self._report_warning else "Research complete")
+        incomplete = bool(self._report_warning or validation_issues)
+        self.on_status("Partial report available" if incomplete else "Research complete")
         return ResearchResult(route, report, selected, warnings, str(run_dir),
-                              incomplete=bool(self._report_warning))
+                              incomplete=incomplete)

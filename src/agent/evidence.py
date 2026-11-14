@@ -4,7 +4,27 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 import re
+from threading import RLock
 from urllib.parse import urlsplit, urlunsplit
+
+
+CITATION_PATTERN = re.compile(r"\[\s*(S\d+(?:\s*[,;]\s*S\d+)*)\s*\]")
+
+
+def parse_citations(text: str) -> list[str]:
+    """Return individual bracketed IDs in first-use order, including groups."""
+    return list(dict.fromkeys(
+        f"[{source_id}]"
+        for match in CITATION_PATTERN.finditer(text)
+        for source_id in re.findall(r"S\d+", match[1])
+    ))
+
+
+def normalize_citations(text: str) -> str:
+    """Expand groups so validation, replacement and GUI links use the same IDs."""
+    return CITATION_PATTERN.sub(
+        lambda match: " ".join(f"[{source_id}]" for source_id in re.findall(r"S\d+", match[1])), text,
+    )
 
 
 @dataclass
@@ -83,38 +103,45 @@ class EvidenceStore:
         self.directory.mkdir(parents=True, exist_ok=True)
         self.sources: list[Source] = []
         self._keys: set[str] = set()
+        # One store belongs to a run; concurrent research tools share this lock.
+        # add() calls save(), so the lock must be reentrant.
+        self._lock = RLock()
 
     def add(self, incoming: list[Source]) -> list[Source]:
-        added = []
-        for item in incoming:
-            key = _dedup_key(item)
-            if key in self._keys:
-                continue
-            self._keys.add(key)
-            item.source_id = f"S{len(self.sources) + 1}"
-            self.sources.append(item)
-            added.append(item)
-        self.save()
-        return added
+        with self._lock:
+            added = []
+            for item in incoming:
+                key = _dedup_key(item)
+                if key in self._keys:
+                    continue
+                self._keys.add(key)
+                item.source_id = f"S{len(self.sources) + 1}"
+                self.sources.append(item)
+                added.append(item)
+            self.save()
+            return added
 
     def save_raw(self, provider: str, query: str, results: list[dict]) -> None:
         # Raw provider responses stay on disk, not in the model's prompt.
-        with (self.directory / "raw_results.jsonl").open("a", encoding="utf-8") as f:
+        with self._lock, (self.directory / "raw_results.jsonl").open("a", encoding="utf-8") as f:
             f.write(json.dumps({"provider": provider, "query": query,
                                 "timestamp": datetime.now(timezone.utc).isoformat(),
                                 "results": results}, ensure_ascii=False) + "\n")
 
     def save(self) -> None:
-        output = self.directory / "sources.json"
-        temp = output.with_suffix(".tmp")
-        temp.write_text(json.dumps([asdict(x) for x in self.sources], indent=2,
-                                   ensure_ascii=False), encoding="utf-8")
-        temp.replace(output)
+        with self._lock:
+            output = self.directory / "sources.json"
+            temp = output.with_suffix(".tmp")
+            temp.write_text(json.dumps([asdict(x) for x in self.sources], indent=2,
+                                       ensure_ascii=False), encoding="utf-8")
+            temp.replace(output)
 
     def select(self, limit: int) -> list[Source]:
         """Prefer usable evidence and diversify across search queries."""
         groups: dict[str, list[Source]] = {}
-        for source in self.sources:
+        with self._lock:
+            sources = list(self.sources)
+        for source in sources:
             groups.setdefault(source.query or "default", []).append(source)
         for group in groups.values():
             # Prefer sources with actual evidence rather than just a title.
@@ -130,7 +157,8 @@ class EvidenceStore:
         return chosen
 
     def validate_citations(self, report: str) -> tuple[list[str], list[str]]:
-        cited = list(dict.fromkeys(re.findall(r"\[S\d+\]", report)))
-        known = {f"[{x.source_id}]" for x in self.sources}
+        cited = parse_citations(report)
+        with self._lock:
+            known = {f"[{x.source_id}]" for x in self.sources}
         invalid = [cid for cid in cited if cid not in known]
         return cited, invalid
