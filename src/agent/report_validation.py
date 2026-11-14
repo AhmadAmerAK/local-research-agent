@@ -23,8 +23,10 @@ def prepare_report(text: str) -> str:
     return normalize_citations(text[:heading.start()] if heading else text).strip()
 
 
-def validate_report(text: str, source_ids: set[str]) -> list[str]:
+def validate_report(text: str, source_ids: set[str], min_required_sources: int = 3) -> list[str]:
     """Check citation coverage and three nonempty, individually cited sections."""
+    if type(min_required_sources) is not int or min_required_sources < 1:
+        raise ValueError("MIN_REQUIRED_SOURCES must be a positive integer")
     text = prepare_report(text)
     cited = parse_citations(text)
     known = {f"[{source_id}]" for source_id in source_ids}
@@ -33,11 +35,12 @@ def validate_report(text: str, source_ids: set[str]) -> list[str]:
     invalid = [citation for citation in cited if citation not in known]
     if invalid:
         issues.append("Citations not present in the supplied evidence: " + ", ".join(invalid))
-    required = min(3, len(source_ids))
+    required = min(min_required_sources, len(source_ids))
     if len(valid) < required:
         issues.append(f"The report needs {required} distinct valid source citations; found {len(valid)}.")
-    if len(source_ids) < 3:
-        issues.append("Fewer than three sources are available; the report has insufficient evidence for full validation.")
+    if len(source_ids) < min_required_sources:
+        issues.append(f"Only {len(source_ids)} sources are available; the configured minimum is "
+                      f"{min_required_sources}. The report has insufficient evidence for full validation.")
 
     headings = list(_SECTIONS.finditer(text))
     perspectives: dict[int, list[str]] = {}

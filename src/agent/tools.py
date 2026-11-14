@@ -17,6 +17,10 @@ PROVIDER_TIMEOUT = httpx.Timeout(connect=5, read=10, write=10, pool=5)
 PROVIDER_DEADLINE = 30.0
 OPENALEX_URL = "https://api.openalex.org/works"
 TAVILY_URL = "https://api.tavily.com/search"
+# Supported API maxima, not application research budgets:
+# https://help.openalex.org/api/paging/
+# https://docs.tavily.com/documentation/api-reference/endpoint/search
+PROVIDER_RESULT_LIMITS = {"openalex": 100, "tavily": 20}
 
 
 class ResearchAPIError(RuntimeError):
@@ -49,7 +53,7 @@ def _request(client: httpx.Client, method: str, url: str, **kwargs) -> dict:
 def _openalex_request(query, key, count):
     params = {
         "search": query,
-        "per_page": min(max(count, 1), 25),
+        "per_page": min(max(count, 1), PROVIDER_RESULT_LIMITS["openalex"]),
         "select": "id,doi,title,display_name,publication_year,authorships,abstract_inverted_index,cited_by_count",
     }
     headers = {"Accept": "application/json"}
@@ -65,7 +69,7 @@ def _tavily_request(query, key, count):
         "query": query,
         "topic": "general",
         "search_depth": "basic",
-        "max_results": min(max(count, 1), 20),
+        "max_results": min(max(count, 1), PROVIDER_RESULT_LIMITS["tavily"]),
         "auto_parameters": False,
         "include_answer": False,
         "include_raw_content": False,
@@ -187,7 +191,7 @@ class ResearchTools:
             return json.dumps(prepared)
         query = prepared
         try:
-            count = self.settings.max_sources
+            count = self.settings.results_per_query
             search = openalex_search if provider == "openalex" else tavily_search
             key = self.settings.openalex_api_key if provider == "openalex" else self.settings.tavily_api_key
             return self._persist(provider, query, search(query, key, count, self.client))
@@ -201,11 +205,14 @@ class ResearchTools:
             return {"error": "Provider not permitted for this turn", "provider": provider}
         if self.provider_errors:
             return {"error": self.provider_errors[-1], "provider": provider}
-        query = " ".join(query.split()).strip()[:300]
+        query = " ".join(query.split()).strip()
         if not query:
             return {"error": "Search query cannot be blank"}
+        if len(query) > self.settings.max_query_chars:
+            return {"error": f"Search query exceeds {self.settings.max_query_chars} characters; "
+                             "shorten it or split it into focused queries."}
         if ((not self.enforce_route and self.used_this_round >= self.settings.max_search_queries) or
-                self.used_queries >= self.settings.max_search_queries * self.settings.max_research_rounds):
+                self.used_queries >= self.settings.search_budget):
             return {"error": "Search budget exceeded"}
         self.used_queries += 1
         self.used_this_round += 1
@@ -223,7 +230,7 @@ class ResearchTools:
         try:
             search = openalex_search_async if provider == "openalex" else tavily_search_async
             key = self.settings.openalex_api_key if provider == "openalex" else self.settings.tavily_api_key
-            raw = await search(prepared, key, self.settings.max_sources, cancel_event=signal)
+            raw = await search(prepared, key, self.settings.results_per_query, cancel_event=signal)
             # A received response is committed without an await between raw data
             # and IDs. Cancellation cannot leave half a successful tool result.
             return self._persist(provider, prepared, raw)
@@ -234,7 +241,7 @@ class ResearchTools:
 
     def _persist(self, provider, query, raw):
         normalize = normalise_openalex if provider == "openalex" else normalise_tavily
-        normalized = [normalize(x) for x in raw]
+        normalized = [normalize(x, snippet_chars=self.settings.search_snippet_chars) for x in raw]
         with self._budget_lock:
             self.store.save_raw(provider, query, raw)
             for item in normalized:
@@ -243,9 +250,12 @@ class ResearchTools:
             added = self.store.add([x for x in normalized if x is not None])
             self.disclosed_ids.update(item.source_id for item in added)
         self.on_status(f"Collected {len(added)} new sources ({len(self.store.sources)} total)")
-        return json.dumps({"provider": provider, "query": query, "new_sources": [
+        return json.dumps({"provider": provider, "query": query,
+                           "requested_results": self.settings.results_per_query,
+                           "result_limit": min(self.settings.results_per_query, PROVIDER_RESULT_LIMITS[provider]),
+                           "snippet_char_limit": self.settings.search_snippet_chars, "new_sources": [
             {"id": item.source_id, "title": item.title, "url": item.url,
-             "snippet": item.snippet[:700]} for item in added
+             "snippet": item.snippet} for item in added
         ]}, ensure_ascii=False)
 
     def _provider_error(self, provider, exc):

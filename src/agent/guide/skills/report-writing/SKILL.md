@@ -24,4 +24,4 @@ Synthesise research findings into a structured report, presenting multiple evide
 [Areas of agreement, disagreement and uncertainty, more insights from other sources]
 
 ## References
-[At least three verified source references]
+[Meet the configured minimum of distinct verified sources; Python appends the references]

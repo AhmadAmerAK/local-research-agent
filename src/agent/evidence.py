@@ -56,13 +56,15 @@ def abstract_from_inverted_index(index: object) -> str:
     return " ".join(positions[p] for p in sorted(positions))
 
 
-def _clean(value: object, limit: int) -> str:
+def _clean(value: object, limit: int | None) -> str:
     return " ".join(str(value or "").split())[:limit]
 
 
-def normalise_openalex(raw: dict) -> Source | None:
+def normalise_openalex(raw: dict, *, snippet_chars: int = 2200) -> Source | None:
     title = _clean(raw.get("display_name") or raw.get("title"), 300)
-    url = _clean(raw.get("id") or raw.get("doi"), 600)
+    # URLs are citation/provenance identifiers; shortening can break links or
+    # merge distinct sources during deduplication. Only preview text is clipped.
+    url = _clean(raw.get("id") or raw.get("doi"), None)
     if not title or not url:
         return None
     authors = [
@@ -73,19 +75,19 @@ def normalise_openalex(raw: dict) -> Source | None:
     publication_year = raw.get("publication_year")
     year = publication_year if isinstance(publication_year, int) else None
     doi = raw.get("doi")
-    return Source("", "openalex", title, url, _clean(abstract, 2200),
+    return Source("", "openalex", title, url, _clean(abstract, snippet_chars),
                   [a for a in authors if a], year=year,
                   doi=doi if isinstance(doi, str) else None)
 
 
-def normalise_tavily(raw: dict) -> Source | None:
+def normalise_tavily(raw: dict, *, snippet_chars: int = 2200) -> Source | None:
     title = _clean(raw.get("title"), 300)
-    url = _clean(raw.get("url"), 600)
+    url = _clean(raw.get("url"), None)
     if not title or not url or not url.lower().startswith(("https://", "http://")):
         return None
     score = raw.get("score")
     date = raw.get("published_date")
-    return Source("", "tavily", title, url, _clean(raw.get("content"), 2200), [],
+    return Source("", "tavily", title, url, _clean(raw.get("content"), snippet_chars), [],
                   published_date=date if isinstance(date, str) else None,
                   score=float(score) if isinstance(score, (float, int)) else None)
 
