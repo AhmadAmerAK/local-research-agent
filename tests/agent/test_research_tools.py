@@ -12,7 +12,7 @@ from agent.config import Settings
 from agent.evidence import (EvidenceStore, Source, abstract_from_inverted_index,
                             normalise_openalex, normalise_tavily)
 from agent.tools import ResearchAPIError, ResearchTools, openalex_search, tavily_search
-from agent.orchestrator import ResearchWorkflow, _extract_json
+from agent.orchestrator import ResearchWorkflow
 
 
 @pytest.fixture
@@ -122,11 +122,10 @@ def test_capability_and_out_of_scope_routes_no_model(settings):
     assert result.route == "capabilities" and not result.sources
 
 
-def test_llm_classifier_parsing(settings, monkeypatch):
+def test_research_routing_is_delegated_to_native_loop(settings):
     workflow = ResearchWorkflow(settings)
-    monkeypatch.setattr(workflow, "_invoke", lambda **kwargs: '```json\n{"category":"academic"}\n```')
-    assert workflow.classify("Find peer-reviewed literature on gait analysis") == "academic"
-    assert _extract_json('garbage') == {}
+    assert workflow.classify("Find peer-reviewed literature on gait analysis") is None
+    assert workflow.classify("Write a research review of gait analysis") is None
 
 
 def test_evidence_selection_diversifies_queries(tmp_path):

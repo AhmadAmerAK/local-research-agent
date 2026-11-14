@@ -109,6 +109,7 @@ class ResearchWindow(QMainWindow):
         super().__init__()
         self.workflow_factory = workflow_factory
         self.worker = None
+        self._session_worker = None
         self.pending_close = False
         self.draft = ""
         self.answer_card = None
@@ -222,7 +223,7 @@ class ResearchWindow(QMainWindow):
         return card
 
     def _update_send(self):
-        self.send.setEnabled(self.worker is None and bool(self.input.toPlainText().strip()))
+        self.send.setEnabled(not self.pending_close and self.worker is None and bool(self.input.toPlainText().strip()))
 
     @pyqtSlot()
     def submit(self):
@@ -237,15 +238,19 @@ class ResearchWindow(QMainWindow):
         self.progress.setRange(0, 0)
         self.status.setText("Starting research…")
         self.log_activity(Activity("research_started", question))
-        self.worker = ResearchWorker(question, self.workflow_factory, self)
-        self.worker.status.connect(self.show_status)
-        self.worker.text.connect(self.append_text)
-        self.worker.activity.connect(self.log_activity)
-        self.worker.completed.connect(self.show_result)
-        self.worker.failed.connect(self.show_error)
-        self.worker.finished.connect(self.worker_finished)
+        if self._session_worker is None:
+            self._session_worker = ResearchWorker(self.workflow_factory, self)
+            self._session_worker.status.connect(self.show_status)
+            self._session_worker.text.connect(self.append_text)
+            self._session_worker.activity.connect(self.log_activity)
+            self._session_worker.completed.connect(self.show_result)
+            self._session_worker.failed.connect(self.show_error)
+            self._session_worker.turn_finished.connect(self.worker_finished)
+            self._session_worker.finished.connect(self.session_finished)
+            self._session_worker.start()
+        self.worker = self._session_worker
         self._update_send()
-        self.worker.start()
+        self.worker.submit(question)
 
     @pyqtSlot(str)
     def show_status(self, text):
@@ -265,6 +270,12 @@ class ResearchWindow(QMainWindow):
 
     @pyqtSlot(object)
     def log_activity(self, event):
+        if event.kind == "draft_reset":
+            self.draft_timer.stop()
+            self.draft = event.payload or ""
+            if self.answer_card is not None:
+                self.answer_card.set_text(self.draft or "Researching…")
+            return
         cursor = self.activity_view.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
         if event.kind == "model_text":
@@ -324,21 +335,27 @@ class ResearchWindow(QMainWindow):
 
     @pyqtSlot()
     def worker_finished(self):
-        worker = self.worker
         self.worker = None
-        worker.deleteLater()
         self.progress.setRange(0, 1)
         self.progress.setValue(1)
         self._update_send()
+
+    @pyqtSlot()
+    def session_finished(self):
+        worker = self._session_worker
+        self.worker = None
+        self._session_worker = None
+        worker.deleteLater()
         if self.pending_close:
             self.close()
 
     def closeEvent(self, event):
-        if self.worker is not None:
-            # The backend has no cancellation API: never destroy a running QThread.
+        if self._session_worker is not None:
             self.pending_close = True
-            self.status.setText("Closing after the current research finishes…")
+            self.status.setText("Closing research session…")
             self.input.setEnabled(False)
+            self.send.setEnabled(False)
+            self._session_worker.stop()
             event.ignore()
         else:
             event.accept()

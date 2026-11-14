@@ -162,3 +162,27 @@ class EvidenceStore:
             known = {f"[{x.source_id}]" for x in self.sources}
         invalid = [cid for cid in cited if cid not in known]
         return cited, invalid
+
+    def get(self, source_id: str) -> Source | None:
+        with self._lock:
+            return next((source for source in self.sources if source.source_id == source_id), None)
+
+    def original_result(self, source_id: str) -> dict | None:
+        """Recover original provider evidence; never accept a filesystem path from a model."""
+        with self._lock:
+            source = self.get(source_id)
+            path = self.directory / "raw_results.jsonl"
+            if source is None or not path.is_file():
+                return None
+            key = _dedup_key(source)
+            with path.open(encoding="utf-8") as handle:
+                for line in handle:
+                    record = json.loads(line)
+                    if record["provider"] != source.provider:
+                        continue
+                    normalize = normalise_openalex if source.provider == "openalex" else normalise_tavily
+                    for raw in record["results"]:
+                        candidate = normalize(raw)
+                        if candidate is not None and _dedup_key(candidate) == key:
+                            return raw
+            return None

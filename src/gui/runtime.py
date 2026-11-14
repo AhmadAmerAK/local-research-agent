@@ -1,7 +1,9 @@
-"""GUI boundary: injectable execution and observation of the existing workflow."""
+"""One background thread owns one research session until the application closes."""
 from dataclasses import dataclass
 from pathlib import Path
+from queue import Queue
 import sys
+from threading import Event
 from typing import Callable, Protocol
 
 from PyQt6.QtCore import QThread, pyqtSignal
@@ -21,7 +23,6 @@ WorkflowFactory = Callable[[Callable, Callable, Callable], Workflow]
 
 
 def default_workflow_factory(on_status, on_text, on_activity):
-    # Load configuration before importing Strands (including telemetry setup).
     from dotenv import load_dotenv
     root = Path(__file__).resolve().parents[2]
     load_dotenv(root / ".env", override=False)
@@ -30,59 +31,58 @@ def default_workflow_factory(on_status, on_text, on_activity):
         sys.path.insert(0, source_path)
     from agent.config import Settings
     from agent.orchestrator import ResearchWorkflow
-    from strands.hooks import BeforeToolCallEvent, AfterToolCallEvent
-
-    class ObservedWorkflow(ResearchWorkflow):
-        """Observe SDK events without replacing the backend's research logic."""
-
-        def _agent(self, **kwargs):
-            agent = super()._agent(**kwargs)
-            existing_callback = agent.callback_handler
-
-            def callback(**event):
-                existing_callback(**event)
-                if isinstance(event.get("data"), str):
-                    on_activity(Activity("model_text", event["data"]))
-                result = event.get("result")
-                if result is not None:
-                    on_activity(Activity("model_metadata", {
-                        "model": self.config.ollama_model,
-                        "stop_reason": result.stop_reason,
-                        "context_size": result.context_size,
-                        "metrics": result.metrics.get_summary(),
-                    }))
-
-            agent.callback_handler = callback
-            agent.hooks.add_callback(BeforeToolCallEvent, lambda event: on_activity(
-                Activity("tool_call", event.tool_use)))
-            agent.hooks.add_callback(AfterToolCallEvent, lambda event: on_activity(
-                Activity("tool_result", {
-                    "tool": event.tool_use,
-                    "result": event.result,
-                    "duration_seconds": event.duration,
-                })))
-            return agent
-
-    return ObservedWorkflow(Settings.from_env(), on_status=on_status, on_text=on_text)
+    return ResearchWorkflow(
+        Settings.from_env(), on_status=on_status, on_text=on_text,
+        on_event=lambda event: on_activity(Activity(event["kind"], event["payload"])),
+    )
 
 
 class ResearchWorker(QThread):
-    """Only signals cross the thread boundary; this class never touches widgets."""
-
+    """A queue serializes turns; creation, use and close all occur in run()."""
     status = pyqtSignal(str)
     text = pyqtSignal(str)
     activity = pyqtSignal(object)
     completed = pyqtSignal(object)
     failed = pyqtSignal(str)
+    turn_finished = pyqtSignal()
 
-    def __init__(self, question: str, factory: WorkflowFactory, parent=None):
+    def __init__(self, factory: WorkflowFactory, parent=None):
         super().__init__(parent)
-        self.question = question
         self.factory = factory
+        self._questions = Queue()
+        self._stopping = Event()
+        self._cancel_event = Event()
+
+    def submit(self, question):
+        if self._stopping.is_set():
+            raise RuntimeError("The research session is closing.")
+        self._questions.put(question)
+
+    def stop(self):
+        self._stopping.set()
+        self._cancel_event.set()
+        self._questions.put(None)
 
     def run(self):
+        workflow = None
         try:
-            workflow = self.factory(self.status.emit, self.text.emit, self.activity.emit)
-            self.completed.emit(workflow.run(self.question))
-        except Exception as exc:
-            self.failed.emit(f"{type(exc).__name__}: {exc}")
+            while not self._stopping.is_set():
+                question = self._questions.get()
+                if question is None or self._stopping.is_set():
+                    break
+                try:
+                    if workflow is None:
+                        workflow = self.factory(self.status.emit, self.text.emit, self.activity.emit)
+                        if hasattr(workflow, "cancel_event"):
+                            workflow.cancel_event = self._cancel_event
+                    self.completed.emit(workflow.run(question))
+                except Exception as exc:
+                    self.failed.emit(f"{type(exc).__name__}: {exc}")
+                finally:
+                    self.turn_finished.emit()
+        finally:
+            if workflow is not None and callable(getattr(workflow, "close", None)):
+                try:
+                    workflow.close()
+                except Exception as exc:
+                    self.activity.emit(Activity("error", f"Session shutdown: {type(exc).__name__}: {exc}"))

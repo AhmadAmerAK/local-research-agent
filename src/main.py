@@ -23,6 +23,7 @@ def main() -> int:
         print("No research question supplied.", file=sys.stderr)
         return 2
     logging.basicConfig(level=logging.WARNING)
+    workflow = None
     try:
         settings = Settings.from_env()
         workflow = ResearchWorkflow(settings, on_status=lambda s: print(f"[status] {s}", file=sys.stderr))
@@ -30,6 +31,9 @@ def main() -> int:
     except Exception as exc:
         print(f"Research failed: {exc}", file=sys.stderr)
         return 1
+    finally:
+        if workflow is not None:
+            workflow.close()
     print(output.answer)
     for warning in output.warnings:
         print(f"[warning] {warning}", file=sys.stderr)

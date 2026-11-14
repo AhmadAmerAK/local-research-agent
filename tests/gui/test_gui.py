@@ -21,24 +21,29 @@ def result(answer="## Findings\nSupported [S1].", warnings=None, incomplete=Fals
 
 
 @pytest.fixture
-def make_window(qtbot):
+def make_window(qtbot, make_session):
     windows = []
     releases = []
 
+    def shutdown(window):
+        for release in releases:
+            release.set()
+        window.close()
+        qtbot.waitUntil(lambda: window._session_worker is None, timeout=5000)
+
     def make(factory):
         window = ResearchWindow(factory)
-        qtbot.addWidget(window)
+        # pytest-qt otherwise deleteLaters the window immediately after close(),
+        # even when closeEvent is deferring deletion for the worker's shutdown.
+        qtbot.addWidget(window, before_close_func=shutdown)
         window.show()
         windows.append(window)
         return window
 
     make.releases = releases
     yield make
-    for release in releases:
-        release.set()
     for window in windows:
-        if window.worker is not None:
-            qtbot.waitUntil(lambda: window.worker is None, timeout=5000)
+        assert window._session_worker is None
 
 
 def send(qtbot, window, question="Find studies on markerless gait analysis"):
@@ -117,6 +122,37 @@ def test_blank_question_and_repeated_submission(qtbot, make_window):
     assert len(window.findChildren(MessageCard)) == 5
 
 
+def test_gui_follow_up_keeps_native_agent_on_one_worker(qtbot, make_window, make_session):
+    from conftest import REPORT, call
+    state = {}
+    def factory(status, text, activity):
+        workflow, model, _, _, _ = make_session([
+            call("select_research_route", category="academic"), call("read_research_instructions"),
+            call("search_papers", query="clinical methods"), REPORT,
+            call("select_research_route", category="academic", follow_up=True),
+            "The first approach is supported by [S1].",
+        ])
+        state.update(workflow=workflow, model=model, owner=get_ident())
+        workflow.on_status, workflow.on_text = status, text
+        workflow.on_event = lambda event: activity(Activity(event["kind"], event["payload"]))
+        return workflow
+    window = make_window(factory)
+    send(qtbot, window)
+    qtbot.waitUntil(lambda: window.worker is None)
+    worker, agent = window._session_worker, state["workflow"].agent
+    send(qtbot, window, "Which of those is best for rehabilitation?")
+    qtbot.waitUntil(lambda: window.worker is None)
+    assert window._session_worker is worker and worker.isRunning()
+    assert state["workflow"].agent is agent
+    assert "first approach" in window.answer_card.body.toPlainText()
+    assert "https://openalex.org/W1" in window.answer_card.body.toHtml()
+    assert {request["thread_id"] for request in state["model"].calls} == {state["owner"]}
+    assert state["owner"] != get_ident()
+    window.close()
+    qtbot.waitUntil(lambda: window._session_worker is None)
+    assert state["workflow"]._closed
+
+
 @pytest.mark.parametrize("factory_error", [False, True])
 def test_failure_and_retry(qtbot, make_window, factory_error):
     def factory(*callbacks):
@@ -164,34 +200,21 @@ def test_links_only_open_web_urls(monkeypatch):
     assert opened == ["https://example.org/study"]
 
 
-def test_gui_adapter_observes_sdk_and_preserves_backend_callback(monkeypatch):
+def test_gui_adapter_forwards_session_events():
     from agent.orchestrator import ResearchWorkflow
-    from strands.hooks import BeforeToolCallEvent, AfterToolCallEvent
-
-    callbacks = {}
-    original_events = []
-    activities = []
-    fake_agent = SimpleNamespace(
-        callback_handler=lambda **event: original_events.append(event),
-        hooks=SimpleNamespace(add_callback=lambda event, callback: callbacks.update({event: callback})),
-    )
-    monkeypatch.setattr(ResearchWorkflow, "_agent", lambda self, **kwargs: fake_agent)
-    workflow = default_workflow_factory(lambda _: None, lambda _: None, activities.append)
-    assert isinstance(workflow, ResearchWorkflow)
-    assert type(workflow).run is ResearchWorkflow.run
-    agent = workflow._agent(tools=[], instructions="test")
-    agent.callback_handler(data="Model generated text")
-    agent.callback_handler(result=SimpleNamespace(
+    activities, streamed = [], []
+    workflow = default_workflow_factory(lambda _: None, streamed.append, activities.append)
+    assert type(workflow) is ResearchWorkflow
+    workflow._events(data="Model generated text")
+    workflow._event("tool_call", {"name": "search_papers", "input": {"query": "real query"}})
+    workflow._events(result=SimpleNamespace(
         stop_reason="end_turn", context_size=123,
         metrics=SimpleNamespace(get_summary=lambda: {"input_tokens": 123}),
     ))
-    tool = {"name": "search_papers", "input": {"query": "real query"}, "toolUseId": "one"}
-    callbacks[BeforeToolCallEvent](SimpleNamespace(tool_use=tool))
-    callbacks[AfterToolCallEvent](SimpleNamespace(tool_use=tool, result={"content": "real result"}, duration=0.5))
-    assert len(original_events) == 2
-    assert [a.kind for a in activities] == ["model_text", "model_metadata", "tool_call", "tool_result"]
-    assert activities[2].payload["input"]["query"] == "real query"
-    assert activities[3].payload["result"] == {"content": "real result"}
+    assert streamed == ["Model generated text"]
+    assert [event.kind for event in activities] == ["model_text", "tool_call", "model_metadata"]
+    assert activities[1].payload["input"]["query"] == "real query"
+    workflow.close()
 
 
 def test_widget_callbacks_run_on_main_thread(qtbot, make_window):
@@ -284,55 +307,32 @@ def test_token_limit_without_report_never_claims_text_was_retained(qtbot, make_w
     assert len(window.findChildren(MessageCard)) == 3
 
 
-def test_provider_failure_and_search_token_limit_together(qtbot, make_window, monkeypatch, tmp_path):
-    # Reproduce the supplied trace through the actual workflow and Qt worker:
-    # provider fails, search prose appears only in activity, then search hits its limit.
-    from agent import orchestrator, tools as research_tools
-    from agent.config import Settings
-    from agent.orchestrator import ResearchWorkflow
-    from strands.types.exceptions import MaxTokensReachedException
-    monkeypatch.setattr(orchestrator, "AGENT_DIR", tmp_path)
+def test_provider_failure_and_token_limit_together(qtbot, make_window, make_session, monkeypatch):
+    from conftest import call
+    from agent import tools as research_tools
     requests = []
-
     def unavailable(*args, **kwargs):
         requests.append(True)
         raise research_tools.ResearchAPIError("Research service unreachable or timed out")
     monkeypatch.setattr(research_tools, "tavily_search", unavailable)
-
     def factory(status, text, activity):
-        settings = Settings("", "fake-key", "http://localhost:11434", "qwen3:4b-instruct",
-                            2, 3, 2, 3, 8192, False)
-        workflow = ResearchWorkflow(settings, on_status=status, on_text=text)
-        workflow.classify = lambda question: "general"
-
-        class SearchAgent:
-            messages = []
-            def __call__(self, prompt):
-                tool_result = self.tool(query="meaning of life philosophical perspectives")
-                assert tool_result["status"] == "error"
-                activity(Activity("tool_result", tool_result))
-                explanation = "I cannot retrieve evidence because the service is unreachable."
-                self.messages = [{"role": "assistant", "content": [{"text": explanation}]}]
-                activity(Activity("model_text", explanation))
-                raise MaxTokensReachedException("Maximum token limit")
-            def shutdown(self):
-                pass
-
-        def create(**kwargs):
-            agent = SearchAgent()
-            agent.tool = kwargs["tools"][0]
-            return agent
-        workflow._agent = create
+        workflow, _, _, _, _ = make_session([
+            call("select_research_route", category="general"), call("read_research_instructions"),
+            call("search_web", query="meaning of life"),
+            {"text": "The service is unavailable.", "limit": True},
+            {"text": "Please retry.", "limit": True},
+        ])
+        workflow.on_status = status
+        workflow.on_text = text
+        workflow.on_event = lambda event: activity(Activity(event["kind"], event["payload"]))
         return workflow
-
     window = make_window(factory)
     send(qtbot, window, "what is the meaning of life")
-    qtbot.waitUntil(lambda: window.worker is None)
+    qtbot.waitUntil(lambda: window.worker is None, timeout=10000)
     response = window.answer_card.body.toPlainText()
     assert "couldn't retrieve sources" in response
     assert "has been kept" not in response
-    assert "No evidence retrieved" not in response
-    assert len(requests) == 1  # No second research round after a provider outage.
+    assert len(requests) == 1
     assert len(window.findChildren(MessageCard)) == 3
     assert window.status.text() == "Research unavailable — please try again"
     assert '"status": "error"' in window.activity_view.toPlainText()

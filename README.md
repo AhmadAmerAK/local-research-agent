@@ -1,6 +1,44 @@
 # Local Research Agent
 A simple locally hosted Research Agent that performs a research query and returns back a summarised cited result.
 
+## Run the application
+
+```bash
+agent-env.venv/bin/python src/gui/gui_main.py
+```
+
+For the command-line interface:
+
+```bash
+agent-env.venv/bin/python src/main.py "Research markerless gait analysis"
+```
+
+Use your activated environment's `python` instead if you followed the `.venv` installation below.
+
+Each GUI window owns one background worker and one Strands research agent. Follow-up questions
+reuse its conversation and evidence. Starting a new application creates an isolated session;
+previous saved research does not automatically enter its context.
+
+The agent selects its research route each turn. Python exposes only that route's search provider
+and enforces a per-question search budget of `MAX_SEARCH_QUERIES * MAX_RESEARCH_ROUNDS`.
+There is no Python search-round loop. Detailed `AGENTS.md` rules and existing skills are loaded
+on demand; essential scope, citation and provider rules always apply.
+
+Evidence and original provider responses are saved under `src/agent/memory/runs/<session-id>/`.
+Individual answers are saved in its `turns/` subdirectory. Native context reduction can compact
+conversation history; the agent can still retrieve original evidence in pages using stable source IDs.
+Closing the window requests cancellation and waits for the worker to close its session safely.
+An in-flight research HTTP request may need to reach its existing timeout before shutdown completes.
+
+## Tests
+
+```bash
+QT_QPA_PLATFORM=offscreen agent-env.venv/bin/python -m pytest tests -q
+```
+
+The regression suite uses the installed Strands loop with scripted model responses and mocked
+providers; it does not require live Ollama inference or consume research API credits.
+
 ## Installation
 
 ### Prerequisites

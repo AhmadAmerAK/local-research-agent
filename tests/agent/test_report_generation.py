@@ -1,288 +1,109 @@
-"""Report-writing regressions: inline evidence, no auxiliary tools, bounded retry."""
+"""Final answer validation and continuation through the native research loop."""
 import json
 from pathlib import Path
-import sys
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
-from agent.config import Settings
-from agent.evidence import Source
-from agent import orchestrator
-from agent.orchestrator import ReportGenerationError, ResearchWorkflow
+from conftest import REPORT, call
+from agent import tools
+from agent.orchestrator import CORE_INSTRUCTIONS, ReportGenerationError
 
 
-VALID_REPORT = (
-    "## Perspective 1\nFirst evidence [S1].\n"
-    "## Perspective 2\nSecond evidence [S2].\n"
-    "## Perspective 3\nThird evidence [S3]."
-)
+START = [call("select_research_route", category="academic"), call("read_research_instructions"),
+         call("search_papers", query="clinical evidence")]
 
 
-@pytest.fixture
-def settings():
-    return Settings("", "", "http://localhost:11434", "qwen3:4b-instruct",
-                    2, 3, 1, 3, 8192, True)
-
-
-def test_report_agent_disables_auxiliary_tools_and_preserves_search_config(monkeypatch, settings):
-    harness = pytest.importorskip("strands_harness")
-    captured = []
-    monkeypatch.setattr(harness, "create_harness", lambda **kwargs: captured.append(kwargs))
-    monkeypatch.setattr(ResearchWorkflow, "_model", lambda self, output_tokens: "test-model")
-    workflow = ResearchWorkflow(settings)
-    workflow._agent(tools=["search_papers"], instructions="search")
-    workflow._agent(tools=[], instructions="report", report_only=True)
-    search, report = captured
-    assert search["tools"] == ["search_papers"]
-    assert search["skills"] == [str(orchestrator.AGENT_DIR / "guide" / "skills")]
-    assert search["context_manager"] == "auto"
-    assert report["tools"] == []
-    assert report["skills"] is False
-    assert report["context_manager"] == {"stash": {"retrieval_tool": False}}
-    assert report["builtin_tools"] == [] and report["builtin_plugins"] == []
-
-
-def test_real_report_harness_has_no_tools(settings):
-    pytest.importorskip("strands_harness")
-    workflow = ResearchWorkflow(settings)
-    agent = workflow._agent(tools=[], instructions="Write from supplied evidence.", report_only=True)
-    try:
-        assert agent.tool_names == []
-    finally:
-        agent.shutdown()
-
-
-@pytest.fixture
-def run_report(monkeypatch, tmp_path, settings):
-    guide = orchestrator._read_guide()
-    monkeypatch.setattr(orchestrator, "AGENT_DIR", tmp_path)
-    monkeypatch.setattr(orchestrator, "_read_guide", lambda: guide)
-
-    def run(answers, source_count=4):
-        calls, statuses = [], []
-        workflow = ResearchWorkflow(settings, on_status=statuses.append)
-        monkeypatch.setattr(workflow, "classify", lambda question: "academic")
-
-        def search(route, question, tools, round_number):
-            tools.store.add([
-                Source("", "openalex", f"Study {i}", f"https://example.org/{i}",
-                       "Retrieved evidence", []) for i in range(source_count)
-            ])
-
-        monkeypatch.setattr(workflow, "_search_round", search)
-        remaining = iter(answers)
-
-        def invoke(**kwargs):
-            calls.append(kwargs)
-            return next(remaining)
-
-        monkeypatch.setattr(workflow, "_invoke", invoke)
-        return workflow, calls, statuses, tmp_path
-
-    return run
-
-
-def test_successful_report_uses_guide_and_does_not_retry(run_report):
-    workflow, calls, statuses, _ = run_report([
-        "## Perspective 1\nEvidence [S1].\n## Perspective 2\nEvidence [S2]."
-        "\n## Perspective 3\nEvidence [S3]."
-    ])
-    result = workflow.run("Why are diagnoses increasing?")
-    assert len(calls) == 1
-    assert "three distinct" in calls[0]["instructions"].lower()
-    assert "COMPLETE report" in calls[0]["prompt"]
-    assert "Perspective 1, Perspective 2, Perspective 3" in calls[0]["prompt"]
-    assert calls[0]["report_only"] is True
-    assert "## References" in result.answer and "https://example.org/0" in result.answer
+def test_successful_report_retains_verified_references(make_session):
+    workflow, model, _, _, statuses = make_session(START + [REPORT])
+    result = workflow.run("Research clinical evidence")
+    assert not result.incomplete and len(result.sources) == 3
+    assert "## References" in result.answer
     assert statuses[-1] == "Research complete"
-    assert result.incomplete is False
+    assert len(model.calls) == 4
+    assert workflow.agent.messages[-1]["content"][0]["text"] == result.answer
 
 
-def test_unfinished_continuation_marks_partial_report(run_report, monkeypatch):
-    workflow, calls, statuses, _ = run_report(["Available findings [S1]."])
-    invoke = workflow._invoke
-    def partial(**kwargs):
-        workflow._report_warning = "The report could not finish automatically."
-        return invoke(**kwargs)
-    monkeypatch.setattr(workflow, "_invoke", partial)
-    result = workflow.run("Why are diagnoses increasing?")
-    assert result.incomplete is True
-    assert "Available findings" in result.answer
-    assert "https://example.org/0" in result.answer
-    assert statuses[-1] == "Partial report available"
-
-
-@pytest.mark.parametrize("first_answer", [
+@pytest.mark.parametrize("invalid", [
     "Let’s begin with the synthesis.",
     "An invented reference [S999].",
-    "A source excluded from supplied evidence [S4].",
-    "Let’s begin.\n## References\n[S1] Study 0",
+    "A report with one source [S1].",
+    "All sources but no perspectives [S1, S2, S3].",
+    REPORT.replace("Practical evidence [S2].", "Practical evidence."),
+    REPORT.replace("[S1]", "[S1, S999]"),
+    "Let’s begin.\n**References**\n[S1] Fabricated bibliography.",
 ])
-def test_citation_free_or_invalid_answer_retries_once(run_report, first_answer):
-    workflow, calls, statuses, _ = run_report([first_answer,
-        "A completed report.\n## Perspective 1\nFirst evidence [S1].\n"
-        "## Perspective 2\nSecond evidence [S2].\n## Perspective 3\nThird evidence [S3]."])
-    result = workflow.run("Why are diagnoses increasing?")
-    assert len(calls) == 2
-    assert "CORRECTION" in calls[1]["prompt"]
-    assert all(call["report_only"] for call in calls)
-    assert any("Retrying" in status for status in statuses)
-    assert "A completed report" in result.answer
-    assert statuses[-1] == "Research complete"
+def test_native_validation_hook_requests_one_correction(make_session, invalid):
+    workflow, model, _, events, statuses = make_session(START + [invalid, REPORT])
+    result = workflow.run("Research clinical methods")
+    assert not result.incomplete
+    assert len(model.calls) == 5
+    assert "Correct these answer issues" in str(model.calls[-1]["messages"])
+    assert statuses.count("Correcting answer validation") == 1
+    assert "[S999]" not in result.answer
 
 
-def test_two_uncited_answers_fail_and_preserve_evidence(run_report):
-    workflow, calls, statuses, directory = run_report(["I will start.", "Let’s begin."])
-    with pytest.raises(ReportGenerationError, match="Report generation failed"):
-        workflow.run("Why are diagnoses increasing?")
-    assert len(calls) == 2
-    assert statuses[-1] == "Report generation failed"
-    assert "Research complete" not in statuses
-    run_dir = next((directory / "memory" / "runs").iterdir())
-    assert (run_dir / "sources.json").is_file()
-    assert not (run_dir / "report.md").exists()
-    assert "Report generation failed" in json.loads((run_dir / "warnings.json").read_text())[0]
-
-
-@pytest.mark.parametrize("first_answer", [
-    "A report with a single valid citation [S1].",
-    "A report with three citations but no perspectives [S1, S2, S3].",
-    VALID_REPORT.replace("Second evidence [S2].", "Second evidence."),
-    VALID_REPORT.replace("[S1]", "[S1, S999]"),
-    VALID_REPORT.replace("[S1]", "[S1, S4]"),
-])
-def test_report_validation_retries_structural_and_citation_errors(run_report, first_answer):
-    workflow, calls, statuses, _ = run_report([first_answer, VALID_REPORT])
-    result = workflow.run("Research question")
-    assert len(calls) == 2
-    assert "CORRECTION" in calls[1]["prompt"]
-    assert result.incomplete is False
-    assert "[S999]" not in result.answer and "[S4]" not in result.answer
-    assert statuses[-1] == "Research complete"
-
-
-def test_invalid_report_after_retry_is_saved_as_incomplete(run_report):
-    workflow, calls, statuses, _ = run_report(["One cited finding [S1]."] * 2)
-    result = workflow.run("Research question")
-    assert len(calls) == 2
-    assert result.incomplete is True
-    assert "One cited finding" in result.answer
-    assert any("Missing Perspective" in warning for warning in result.warnings)
+def test_report_with_invalid_group_after_retry_is_preserved_as_partial(make_session):
+    malformed = REPORT.replace("[S1]", "[S1, S999]")
+    workflow, model, _, _, statuses = make_session(START + [malformed, malformed])
+    result = workflow.run("Research clinical methods")
+    assert result.incomplete and "[UNVERIFIED]" in result.answer
+    assert "[S999]" not in result.answer
+    assert any("[S999]" in warning for warning in result.warnings)
     assert statuses[-1] == "Partial report available"
-    assert "Research complete" not in statuses
     assert Path(result.run_directory, "report.md").read_text().strip() == result.answer
     assert json.loads(Path(result.run_directory, "warnings.json").read_text()) == result.warnings
 
 
-def test_invalid_grouped_citation_is_marked_and_never_referenced(run_report):
-    malformed = VALID_REPORT.replace("[S1]", "[S1, S999]")
-    workflow, calls, statuses, _ = run_report([malformed] * 2)
-    result = workflow.run("Research question")
-    assert len(calls) == 2 and result.incomplete is True
-    assert "[UNVERIFIED]" in result.answer
-    assert "[S999]" not in result.answer
-    assert "[S1]" in result.answer.split("## References")[1]
-    assert any("[S999]" in warning for warning in result.warnings)
+def test_two_uncited_answers_fail_without_new_agent_or_research_loop(make_session):
+    workflow, model, providers, _, statuses = make_session(START + ["I will start.", "Let’s begin."])
+    with pytest.raises(ReportGenerationError, match="no valid evidence citations"):
+        workflow.run("Research clinical methods")
+    assert len(model.calls) == 5 and len(providers) == 1
+    assert (workflow.store.directory / "sources.json").is_file()
+    assert "Research complete" not in statuses
 
 
-def test_grouped_citations_generate_canonical_references_without_retry(run_report):
-    grouped = VALID_REPORT.replace("[S1]", "[S1, S2]")
-    workflow, calls, statuses, _ = run_report([grouped])
-    result = workflow.run("Research question")
-    assert len(calls) == 1 and not result.incomplete
-    assert "[S1] [S2]" in result.answer
-    assert "[S1, S2]" not in result.answer
+def test_grouped_citations_have_one_reference_per_source(make_session):
+    workflow, _, _, _, _ = make_session(START + [REPORT.replace("[S1]", "[S1, S2]")])
+    result = workflow.run("Research clinical methods")
+    assert "[S1] [S2]" in result.answer and not result.incomplete
     for source in result.sources:
         assert result.answer.count(f"- [{source.source_id}]") == 1
 
 
-def test_insufficient_evidence_returns_partial_report_without_pointless_retry(run_report):
-    workflow, calls, statuses, _ = run_report(["Available finding [S1]. Evidence is limited."], source_count=1)
-    result = workflow.run("Research question")
-    assert len(calls) == 1
-    assert result.incomplete is True
+def test_insufficient_evidence_does_not_trigger_pointless_regeneration(make_session, monkeypatch):
+    monkeypatch.setattr(tools, "openalex_search", lambda *args: [{
+        "id": "https://openalex.org/W1", "title": "One study", "abstract_inverted_index": {"Finding": [0]},
+    }])
+    workflow, model, _, _, statuses = make_session(START + ["Available finding [S1]. Evidence is limited."])
+    result = workflow.run("Research clinical methods")
+    assert result.incomplete and len(model.calls) == 4
     assert any("insufficient evidence" in warning for warning in result.warnings)
-    assert "Available finding" in result.answer
     assert statuses[-1] == "Partial report available"
 
 
-@pytest.mark.parametrize("continuation_error", [None, "limit", "connection"])
-def test_output_limit_continues_same_agent_once_and_retains_text(monkeypatch, settings, continuation_error):
-    exceptions = pytest.importorskip("strands.types.exceptions")
-    limit = exceptions.MaxTokensReachedException
-    streamed, statuses, created = [], [], []
-    workflow = ResearchWorkflow(settings, on_text=streamed.append, on_status=statuses.append)
-
-    class FakeAgent:
-        def __init__(self):
-            self.callback_handler = lambda **event: workflow.on_text(event["data"])
-            self.messages = []
-            self.prompts = []
-            self.closed = False
-
-        def __call__(self, prompt):
-            self.prompts.append(prompt)
-            chunk = "Evidence [S1].\n" if len(self.prompts) == 1 else "Further evidence [S2]."
-            self.callback_handler(data=chunk)
-            self.messages.append({"role": "assistant", "content": [{"text": chunk}]})
-            if len(self.prompts) == 1 or continuation_error == "limit":
-                raise limit("Maximum token limit")
-            if continuation_error == "connection":
-                raise ConnectionError("Connection interrupted")
-            return chunk
-
-        def shutdown(self):
-            self.closed = True
-
-    agent = FakeAgent()
-
-    def create(**kwargs):
-        created.append(kwargs)
-        return agent
-
-    monkeypatch.setattr(workflow, "_agent", create)
-    output = workflow._invoke(prompt="Supplied evidence", report_only=True, stream_text=True)
-    assert len(created) == 1 and len(agent.prompts) == 2
-    assert "exactly where" in agent.prompts[1]
-    assert output == "Evidence [S1].\nFurther evidence [S2]."
-    assert "".join(streamed) == output
-    assert agent.closed
-    assert statuses == ["Continuing report generation"]
-    assert bool(workflow._report_warning) is (continuation_error is not None)
+@pytest.mark.parametrize("ending", ["complete", "limit", "connection"])
+def test_continuation_uses_same_agent_and_preserves_partial_text(make_session, ending):
+    partial = "## Perspective 1\nFirst findings [S1].\n"
+    rest = "## Perspective 2\nSecond findings [S2].\n## Perspective 3\nThird findings [S3]."
+    next_step = rest if ending == "complete" else {"text": rest, "limit": True} if ending == "limit" else ConnectionError("Interrupted")
+    workflow, model, providers, events, statuses = make_session(START + [{"text": partial, "limit": True}, next_step])
+    result = workflow.run("Research clinical methods")
+    assert "First findings" in result.answer
+    assert len(model.calls) == 5 and len(providers) == 1
+    assert statuses.count("Continuing answer generation") == 1
+    assert result.incomplete is (ending != "complete")
+    if ending != "connection":
+        assert "Third findings" in result.answer
+    assert workflow.agent is not None  # It lives until session close, not end of turn.
 
 
-def test_output_limit_in_classification_still_fails_without_evidence(monkeypatch, settings):
-    exceptions = pytest.importorskip("strands.types.exceptions")
-    class FakeAgent:
-        closed = False
-        def __call__(self, prompt):
-            raise exceptions.MaxTokensReachedException("Maximum token limit")
-        def shutdown(self):
-            self.closed = True
-    agent = FakeAgent()
-    workflow = ResearchWorkflow(settings)
-    monkeypatch.setattr(workflow, "_agent", lambda **kwargs: agent)
-    with pytest.raises(exceptions.MaxTokensReachedException):
-        workflow._invoke(prompt="Search")
-    assert agent.closed
-
-
-def test_output_limit_in_search_keeps_evidence_and_does_not_continue(monkeypatch, settings):
-    exceptions = pytest.importorskip("strands.types.exceptions")
-    statuses = []
-    class FakeAgent:
-        calls = 0
-        closed = False
-        messages = [{"role": "assistant", "content": [{"text": "The service could not be reached."}]}]
-        def __call__(self, prompt):
-            self.calls += 1
-            raise exceptions.MaxTokensReachedException("Maximum token limit")
-        def shutdown(self):
-            self.closed = True
-    agent = FakeAgent()
-    workflow = ResearchWorkflow(settings, on_status=statuses.append)
-    monkeypatch.setattr(workflow, "_agent", lambda **kwargs: agent)
-    assert workflow._invoke(prompt="Search", tools=[object()]) == "The service could not be reached."
-    assert agent.calls == 1 and agent.closed
-    assert "checking retrieved evidence" in statuses[-1]
+def test_persistent_agent_keeps_skills_lazy_and_only_current_provider_exposed(make_session, monkeypatch):
+    workflow, model, _, _, _ = make_session([])
+    workflow._ensure_session()
+    assert set(workflow.agent.tool_names) == {
+        "select_research_route", "read_research_instructions", "read_evidence",
+    }
+    assert "# Research Agent" not in workflow.agent.system_prompt
+    assert "CORE_INSTRUCTIONS" not in workflow.agent.system_prompt
+    assert workflow.agent._context_manager_instance is not None

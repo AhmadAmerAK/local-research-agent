@@ -3,6 +3,7 @@ import json
 import logging
 import time
 from typing import Callable
+from threading import RLock
 
 import httpx
 
@@ -106,18 +107,36 @@ class ResearchTools:
         self.used_this_round = 0
         self.queries: list[str] = []
         self.provider_errors: list[str] = []
+        self.enforce_route = False
+        self.active_route: str | None = None
+        self.disclosed_ids: set[str] = set()
+        self._budget_lock = RLock()
         self.on_status = on_status or (lambda _: None)
 
     def start_round(self) -> None:
         self.used_this_round = 0
 
+    def start_turn(self) -> None:
+        """Renew the user-turn budget without discarding session evidence or IDs."""
+        with self._budget_lock:
+            self.used_queries = self.used_this_round = 0
+            self.queries.clear()
+            self.provider_errors.clear()
+            self.active_route = None
+
     def _search(self, provider: str, query: str) -> str:
+        with self._budget_lock:
+            return self._search_permitted(provider, query)
+
+    def _search_permitted(self, provider: str, query: str) -> str:
+        if self.enforce_route and provider != {"academic": "openalex", "general": "tavily"}.get(self.active_route):
+            return json.dumps({"error": "Provider not permitted for this turn", "provider": provider})
         if self.provider_errors:
             return json.dumps({"error": self.provider_errors[-1], "provider": provider})
         query = " ".join(query.split()).strip()[:300]
         if not query:
             return json.dumps({"error": "Search query cannot be blank"})
-        if (self.used_this_round >= self.settings.max_search_queries or
+        if ((not self.enforce_route and self.used_this_round >= self.settings.max_search_queries) or
                 self.used_queries >= self.settings.max_search_queries * self.settings.max_research_rounds):
             return json.dumps({"error": "Search budget exceeded"})
         self.used_queries += 1
@@ -138,6 +157,7 @@ class ResearchTools:
                 if item is not None:
                     item.query = query
             added = self.store.add([x for x in normalized if x is not None])
+            self.disclosed_ids.update(item.source_id for item in added)
             self.on_status(f"Collected {len(added)} new sources ({len(self.store.sources)} total)")
             return json.dumps({"provider": provider, "query": query, "new_sources": [
                 {"id": item.source_id, "title": item.title, "url": item.url,
