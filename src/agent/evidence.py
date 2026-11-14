@@ -1,0 +1,190 @@
+"""Provider-agnostic evidence records and local, inspectable run storage."""
+from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
+import json
+from pathlib import Path
+import re
+from threading import RLock
+from urllib.parse import urlsplit, urlunsplit
+
+
+CITATION_PATTERN = re.compile(r"\[\s*(S\d+(?:\s*[,;]\s*S\d+)*)\s*\]")
+
+
+def parse_citations(text: str) -> list[str]:
+    """Return individual bracketed IDs in first-use order, including groups."""
+    return list(dict.fromkeys(
+        f"[{source_id}]"
+        for match in CITATION_PATTERN.finditer(text)
+        for source_id in re.findall(r"S\d+", match[1])
+    ))
+
+
+def normalize_citations(text: str) -> str:
+    """Expand groups so validation, replacement and GUI links use the same IDs."""
+    return CITATION_PATTERN.sub(
+        lambda match: " ".join(f"[{source_id}]" for source_id in re.findall(r"S\d+", match[1])), text,
+    )
+
+
+@dataclass
+class Source:
+    source_id: str
+    provider: str
+    title: str
+    url: str
+    snippet: str
+    authors: list[str]
+    year: int | None = None
+    published_date: str | None = None
+    doi: str | None = None
+    score: float | None = None
+    query: str = ""
+
+
+def abstract_from_inverted_index(index: object) -> str:
+    """Decode OpenAlex abstract_inverted_index into readable plain text."""
+    if not isinstance(index, dict):
+        return ""
+    positions: dict[int, str] = {}
+    for word, offsets in index.items():
+        if not isinstance(word, str) or not isinstance(offsets, list):
+            continue
+        for offset in offsets:
+            if isinstance(offset, int) and 0 <= offset < 10000:
+                positions[offset] = word
+    return " ".join(positions[p] for p in sorted(positions))
+
+
+def _clean(value: object, limit: int | None) -> str:
+    return " ".join(str(value or "").split())[:limit]
+
+
+def normalise_openalex(raw: dict, *, snippet_chars: int = 2200) -> Source | None:
+    title = _clean(raw.get("display_name") or raw.get("title"), 300)
+    # URLs are citation/provenance identifiers; shortening can break links or
+    # merge distinct sources during deduplication. Only preview text is clipped.
+    url = _clean(raw.get("id") or raw.get("doi"), None)
+    if not title or not url:
+        return None
+    authors = [
+        _clean((item.get("author") or {}).get("display_name"), 90)
+        for item in (raw.get("authorships") or []) if isinstance(item, dict)
+    ][:4]
+    abstract = abstract_from_inverted_index(raw.get("abstract_inverted_index"))
+    publication_year = raw.get("publication_year")
+    year = publication_year if isinstance(publication_year, int) else None
+    doi = raw.get("doi")
+    return Source("", "openalex", title, url, _clean(abstract, snippet_chars),
+                  [a for a in authors if a], year=year,
+                  doi=doi if isinstance(doi, str) else None)
+
+
+def normalise_tavily(raw: dict, *, snippet_chars: int = 2200) -> Source | None:
+    title = _clean(raw.get("title"), 300)
+    url = _clean(raw.get("url"), None)
+    if not title or not url or not url.lower().startswith(("https://", "http://")):
+        return None
+    score = raw.get("score")
+    date = raw.get("published_date")
+    return Source("", "tavily", title, url, _clean(raw.get("content"), snippet_chars), [],
+                  published_date=date if isinstance(date, str) else None,
+                  score=float(score) if isinstance(score, (float, int)) else None)
+
+
+def _dedup_key(source: Source) -> str:
+    if source.doi:
+        return source.doi.lower().removeprefix("https://doi.org/").removeprefix("http://doi.org/")
+    parsed = urlsplit(source.url.lower())
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path.rstrip("/"), "", ""))
+
+
+class EvidenceStore:
+    def __init__(self, directory: Path):
+        self.directory = Path(directory)
+        self.directory.mkdir(parents=True, exist_ok=True)
+        self.sources: list[Source] = []
+        self._keys: set[str] = set()
+        # One store belongs to a run; concurrent research tools share this lock.
+        # add() calls save(), so the lock must be reentrant.
+        self._lock = RLock()
+
+    def add(self, incoming: list[Source]) -> list[Source]:
+        with self._lock:
+            added = []
+            for item in incoming:
+                key = _dedup_key(item)
+                if key in self._keys:
+                    continue
+                self._keys.add(key)
+                item.source_id = f"S{len(self.sources) + 1}"
+                self.sources.append(item)
+                added.append(item)
+            self.save()
+            return added
+
+    def save_raw(self, provider: str, query: str, results: list[dict]) -> None:
+        # Raw provider responses stay on disk, not in the model's prompt.
+        with self._lock, (self.directory / "raw_results.jsonl").open("a", encoding="utf-8") as f:
+            f.write(json.dumps({"provider": provider, "query": query,
+                                "timestamp": datetime.now(timezone.utc).isoformat(),
+                                "results": results}, ensure_ascii=False) + "\n")
+
+    def save(self) -> None:
+        with self._lock:
+            output = self.directory / "sources.json"
+            temp = output.with_suffix(".tmp")
+            temp.write_text(json.dumps([asdict(x) for x in self.sources], indent=2,
+                                       ensure_ascii=False), encoding="utf-8")
+            temp.replace(output)
+
+    def select(self, limit: int) -> list[Source]:
+        """Prefer usable evidence and diversify across search queries."""
+        groups: dict[str, list[Source]] = {}
+        with self._lock:
+            sources = list(self.sources)
+        for source in sources:
+            groups.setdefault(source.query or "default", []).append(source)
+        for group in groups.values():
+            # Prefer sources with actual evidence rather than just a title.
+            # Respect original provider order when evidence availability ties.
+            group.sort(key=lambda x: bool(x.snippet), reverse=True)
+        chosen: list[Source] = []
+        while len(chosen) < limit and any(groups.values()):
+            for group in groups.values():
+                if group:
+                    chosen.append(group.pop(0))
+                    if len(chosen) == limit:
+                        break
+        return chosen
+
+    def validate_citations(self, report: str) -> tuple[list[str], list[str]]:
+        cited = parse_citations(report)
+        with self._lock:
+            known = {f"[{x.source_id}]" for x in self.sources}
+        invalid = [cid for cid in cited if cid not in known]
+        return cited, invalid
+
+    def get(self, source_id: str) -> Source | None:
+        with self._lock:
+            return next((source for source in self.sources if source.source_id == source_id), None)
+
+    def original_result(self, source_id: str) -> dict | None:
+        """Recover original provider evidence; never accept a filesystem path from a model."""
+        with self._lock:
+            source = self.get(source_id)
+            path = self.directory / "raw_results.jsonl"
+            if source is None or not path.is_file():
+                return None
+            key = _dedup_key(source)
+            with path.open(encoding="utf-8") as handle:
+                for line in handle:
+                    record = json.loads(line)
+                    if record["provider"] != source.provider:
+                        continue
+                    normalize = normalise_openalex if source.provider == "openalex" else normalise_tavily
+                    for raw in record["results"]:
+                        candidate = normalize(raw)
+                        if candidate is not None and _dedup_key(candidate) == key:
+                            return raw
+            return None
