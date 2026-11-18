@@ -11,6 +11,7 @@ import re
 import unicodedata
 
 from .evidence import CITATION_PATTERN, abstract_from_inverted_index, parse_citations
+from .report_validation import is_citation_metadata
 
 _BOUNDARY = re.compile(
     r"(?<=[.!?])(?P<citations>(?:\s*\[\s*S\d+(?:\s*[,;]\s*S\d+)*\s*\])*)"
@@ -18,8 +19,11 @@ _BOUNDARY = re.compile(
 )
 _HEADING = re.compile(
     r"^(?:#{1,6}\s|(?:\*\*|__)?(?:Perspective\s+\d+[^.!?]*|Executive summary|"
-    r"Overall synthesis|Limitations|References)(?:\*\*|__)?\s*:?$)", re.I,
+    r"Overall synthesis|Synthesis(?: and limitations)?|Summary|Final assessment|"
+    r"Evidence gaps|Limitations(?: and uncertainties)?|References)(?:\*\*|__)?\s*:?$)", re.I,
 )
+_SEPARATOR = re.compile(r"^\s*(?:(?:-\s*){3,}|(?:\*\s*){3,}|(?:_\s*){3,})$")
+_SETEXT = re.compile(r"^\s*(?:={3,}|-{3,})\s*$")
 _TOKENS = re.compile(r"\d+(?:\.\d+)?%?|[^\W\d_]+|[^\w\s]", re.UNICODE)
 _NUMBER = re.compile(r"^\d+(?:\.\d+)?%?$")
 
@@ -34,9 +38,11 @@ class ClaimCheck:
     evidence: list[dict]
     start: int
     end: int
+    reason_code: str = ""
 
 
 def _tokens(text):
+    text = re.sub(r"^\s*#{1,6}\s+", "", text)
     text = CITATION_PATTERN.sub("", text)
     text = unicodedata.normalize("NFKC", text).casefold().strip(" \t\r\n.*_\"'“”‘’!?:;")
     # Keep internal punctuation and ALL operators: dropping a sign/comparator
@@ -49,8 +55,15 @@ def _spans(text):
     offset = 0
     paragraph_start = None
     paragraphs = []
-    for line in text.splitlines(keepends=True):
-        if not line.strip() or _HEADING.match(line.strip()):
+    lines = text.splitlines(keepends=True)
+    for index, line in enumerate(lines):
+        # A cited factual assertion still needs checking even when formatted as
+        # a heading. Ordinary headings and citation-only footers are structure.
+        cited = bool(parse_citations(line))
+        setext_heading = bool(line.strip() and not cited and index + 1 < len(lines)
+                              and _SETEXT.match(lines[index + 1]))
+        if (not line.strip() or (_HEADING.match(line.strip()) and not cited) or _SEPARATOR.match(line)
+                or _SETEXT.match(line) or setext_heading or is_citation_metadata(line)):
             if paragraph_start is not None:
                 paragraphs.append((paragraph_start, offset))
                 paragraph_start = None
@@ -143,29 +156,56 @@ def check_claims(text, store, allowed_ids):
             status = "unverifiable"
             reason = "The cited excerpts disagree; a direct match does not resolve the conflict."
             excerpts = matched + [c[1] for c in conflicts]
-        elif matched:
-            status, reason, excerpts = "supported", "Complete sentence matches original retrieved text.", matched
+            code = "conflicting_sources"
         elif conflicts:
             status, reason, excerpts = "unsupported", conflicts[0][0], [c[1] for c in conflicts]
+            code = "contradiction"
+        elif any(source_id not in allowed_ids for source_id in cited):
+            status, excerpts = "unverifiable", matched
+            reason, code = "One or more cited IDs are not in the supplied evidence.", "unknown_citation"
+        elif cited and any(not evidence.get(source_id) for source_id in cited):
+            status, excerpts = "unverifiable", matched
+            reason, code = "Original evidence is missing for one or more citations.", "missing_evidence"
+        elif matched:
+            status, reason, excerpts = "supported", "Complete sentence matches original retrieved text.", matched
+            code = "direct_match"
         else:
             status, excerpts = "unverifiable", []
-            reason = ("No source citation on this claim." if not cited else
-                      "Original evidence is missing for one or more citations." if any(not evidence.get(s) for s in cited)
-                      else "No direct match or narrowly detectable contradiction; semantic support needs review.")
-        checks.append(ClaimCheck(f"C{len(checks) + 1}", claim, cited, status, reason, excerpts, start, end))
+            if not cited:
+                reason, code = "No source citation on this claim.", "missing_citation"
+            elif any(not evidence.get(s) for s in cited):
+                reason, code = "Original evidence is missing for one or more citations.", "missing_evidence"
+            else:
+                reason, code = ("No direct match or narrowly detectable contradiction; semantic support needs review.",
+                                "semantic_review")
+        checks.append(ClaimCheck(f"C{len(checks) + 1}", claim, cited, status, reason, excerpts, start, end, code))
     return checks
 
 
 def annotate_grounding(text, checks):
     """Label uncertainty in the same answer card; details are saved separately."""
     for check in reversed(checks):
-        if check.status != "supported":
-            label = "Unsupported by cited evidence" if check.status == "unsupported" else "Support not verified"
-            text = text[:check.end] + f" **[{label}]**" + text[check.end:]
+        if check.status == "unsupported":
+            # A known contradiction must remain attached to the actual claim,
+            # with the reason and original source attribution visible.
+            sources = ", ".join(dict.fromkeys(item["source_id"] for item in check.evidence))
+            marker = (f" **[Unsupported by cited evidence]** ({check.claim_id}: {check.reason}"
+                      f" Sources: {sources}.)")
+        else:
+            label = {"unknown_citation": "Unknown citation", "missing_citation": "Citation needed",
+                     "missing_evidence": "Evidence unavailable", "conflicting_sources": "Conflicting sources"}.get(
+                         check.reason_code)
+            marker = f" **[{label}: {check.claim_id}]**" if label else ""
+            if check.reason_code == "semantic_review":
+                marker = f" [Review {check.claim_id}]"
+        text = text[:check.end] + marker + text[check.end:]
     if checks:
         counts = {status: sum(c.status == status for c in checks)
                   for status in ("supported", "unsupported", "unverifiable")}
         text += (f"\n\n*Evidence check: {counts['supported']} direct matches, {counts['unsupported']} conflicts, "
-                 f"{counts['unverifiable']} not verified. These checks compare retrieved excerpts, not full papers "
-                 "or independent facts. Unverified claims may be valid paraphrases; review their sources.*")
+                 f"{counts['unverifiable']} not verified. Review C# marks a cited claim needing source review, "
+                 "including possible valid paraphrases; no semantic support is assumed. "
+                 "Contradictions and missing citations/evidence are marked inline. "
+                 "Claim-level details are in Agent Activity. These checks compare retrieved excerpts, "
+                 "not independent facts.*")
     return text

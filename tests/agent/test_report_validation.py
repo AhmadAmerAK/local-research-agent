@@ -69,3 +69,15 @@ def test_synthesis_citations_do_not_substitute_for_perspective_citations():
 def test_insufficient_evidence_is_reported_without_demanding_invented_sources():
     issues = validate_report(VALID_REPORT.replace("S2", "S1").replace("S3", "S1"), {"S1"})
     assert len(issues) == 1 and "insufficient evidence" in issues[0]
+
+
+@pytest.mark.parametrize("footer", ["Citation: [S8]", "Citations: [S8, S9]", "*Source: [S8]*",
+                                    "**Sources:** [S8], [S9]", "[Citations: S8, S9]"])
+def test_citation_only_footers_cannot_inflate_narrative_source_counts(footer):
+    text = "An actual finding [S1].\n\n" + footer
+    assert parse_citations(prepare_report(text)) == ["[S1]"]
+
+
+def test_source_label_with_a_factual_assertion_is_not_discarded():
+    text = "Source: The trial included 400 adults with stroke [S1]."
+    assert prepare_report(text) == text

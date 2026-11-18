@@ -59,8 +59,8 @@ def test_claim_boundaries_include_uncited_sentences_and_citation_after_period(tm
     assert [c.status for c in checks] == ["supported", "unverifiable"]
     assert checks[0].citations == ["S1"]
     marked = annotate_grounding(report, checks)
-    assert marked.count("**[Support not verified]**") == 1
-    assert "An unrelated assertion. **[Support not verified]**" in marked
+    assert marked.count("**[Citation needed:") == 1
+    assert "An unrelated assertion. **[Citation needed: C2]**" in marked
 
 
 def test_match_must_be_in_the_cited_source_not_another_retrieved_source(tmp_path):
@@ -89,6 +89,7 @@ def test_disagreeing_cited_sources_are_unverifiable_even_with_a_direct_match(tmp
     check = check_claims("The trial included 40 adults with stroke [S1, S2].", store, {"S1", "S2"})[0]
     assert check.status == "unverifiable" and "disagree" in check.reason
     assert {e["source_id"] for e in check.evidence} == {"S1", "S2"}
+    assert "Conflicting sources" in annotate_grounding(check.text, [check])
 
 
 @pytest.mark.parametrize("operator", ["≤", "≥", "≠", "~", "-", "+"])
@@ -103,6 +104,69 @@ def test_equivalent_numeric_formatting_is_not_reported_as_a_conflict(tmp_path, e
     store = evidence_store(tmp_path, f"Reported outcome was {evidence} in adults.")
     check = check_claims(f"Reported outcome was {claim} in adults [S1].", store, {"S1"})[0]
     assert check.status == "unverifiable"
+
+
+def test_headings_separators_and_setext_titles_are_not_claims_but_bold_facts_are(tmp_path):
+    store = evidence_store(tmp_path, "The treatment was not clinically effective.")
+    report = ("## Executive Summary\n---\n**Evidence Gaps**\n***\n"
+              "**Synthesis and Limitations**\nPractical observations\n---\n"
+              "**The treatment was clinically effective [S1].**\n\n[Citations: S1]\n")
+    checks = check_claims(report, store, {"S1"})
+    assert len(checks) == 1 and checks[0].status == "unsupported"
+    assert "The treatment was clinically effective" in checks[0].text
+
+
+def test_semantic_abstention_is_compact_but_contradictions_and_uncited_claims_stay_visible(tmp_path):
+    store = evidence_store(tmp_path, "The trial included 40 adults with stroke.")
+    report = ("Forty stroke survivors participated in the trial [S1].\n\n"
+              "The trial included 400 adults with stroke [S1].\n\n"
+              "The intervention prevents all future symptoms.")
+    checks = check_claims(report, store, {"S1"})
+    marked = annotate_grounding(report, checks)
+    assert [c.status for c in checks] == ["unverifiable", "unsupported", "unverifiable"]
+    assert "**[Support not verified]**" not in marked
+    assert "[Review C1]" in marked
+    assert "Unsupported by cited evidence" in marked and "40" in marked and "400" in marked
+    assert "Citation needed" in marked
+    assert "Evidence check:" in marked and marked.count("Evidence check:") == 1
+    assert "source review" in marked.lower()
+    assert all(c.reason for c in checks)
+
+
+def test_missing_original_unknown_ids_and_disagreeing_sources_are_not_hidden_in_summary(tmp_path):
+    store = evidence_store(tmp_path, "The trial included 40 adults with stroke.")
+    missing = "A new assertion [S999]."
+    checks = check_claims(missing, store, {"S1"})
+    assert "Unknown citation" in annotate_grounding(missing, checks)
+    (store.directory / "raw_results.jsonl").unlink()
+    text = "The trial included 40 adults with stroke [S1]."
+    assert "Evidence unavailable" in annotate_grounding(text, check_claims(text, store, {"S1"}))
+
+
+def test_unknown_extra_citation_cannot_hide_a_detected_contradiction(tmp_path):
+    store = evidence_store(tmp_path, "The trial included 40 adults with stroke.")
+    claim = "The trial included 400 adults with stroke [S1, S999]."
+    checks = check_claims(claim, store, {"S1"})
+    assert checks[0].status == "unsupported"
+    assert "Unsupported by cited evidence" in annotate_grounding(claim, checks)
+    assert "40" in checks[0].reason and "400" in checks[0].reason
+
+
+@pytest.mark.parametrize("claim", [
+    "The trial included 400 adults with stroke [S1].\n---\n",
+    "## The trial included 400 adults with stroke [S1].\n",
+])
+def test_heading_formatting_cannot_hide_a_cited_factual_contradiction(tmp_path, claim):
+    store = evidence_store(tmp_path, "The trial included 40 adults with stroke.")
+    checks = check_claims(claim, store, {"S1"})
+    assert len(checks) == 1 and checks[0].status == "unsupported"
+    assert "Unsupported by cited evidence" in annotate_grounding(claim, checks)
+
+
+@pytest.mark.parametrize("footer", ["Citation: [S1]", "*Source: [S1]*", "**Sources:** [S1], [S2]"])
+def test_source_only_metadata_is_not_a_claim(tmp_path, footer):
+    store = evidence_store(tmp_path, "The trial included 40 adults with stroke.")
+    assert check_claims(footer, store, {"S1"}) == []
 
 
 def test_native_report_preserves_validation_and_exposes_grounding_without_extra_model_calls(make_session, monkeypatch):
@@ -126,7 +190,8 @@ def test_native_report_preserves_validation_and_exposes_grounding_without_extra_
     assert [c.status for c in result.grounding] == ["supported", "unsupported", "unverifiable"]
     assert result.incomplete and statuses[-1] == "Partial report available"
     assert "**[Unsupported by cited evidence]**" in result.answer
-    assert "**[Support not verified]**" in result.answer
+    assert "**[Support not verified]**" not in result.answer
+    assert "source review" in result.answer
     saved = json.loads(Path(result.run_directory, "grounding.json").read_text())
     assert saved[1]["status"] == "unsupported" and "40 adults" in saved[1]["evidence"][0]["excerpt"]
     assert len(model.calls) == 4

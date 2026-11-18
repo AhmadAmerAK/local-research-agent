@@ -98,9 +98,22 @@ the same validity checks. Operational budgets have no arbitrary application uppe
 Three substantive, individually cited perspectives remain an assignment requirement independent
 of source count. For example, `MIN_REQUIRED_SOURCES=1` permits three perspectives supported by
 one source; `MIN_REQUIRED_SOURCES=4` requires at least four cited sources. The agent must still
-acknowledge insufficient evidence instead of inventing sources. Conversational follow-ups retain
-their existing concise-answer policy: at least one valid supporting citation, without repeating
-the full report or its source minimum. The guide and report skill use these same rules.
+acknowledge insufficient evidence instead of inventing sources. Conversational follow-ups must
+answer the latest question directly with at least one valid supporting citation, using relevant
+conversation/evidence and searching autonomously when needed. They do not repeat the full report
+or its source minimum. If the user explicitly asks for another full report, the model sets
+`full_report=true` on the existing routing tool and full report validation applies. The current
+response format is included in the native route result and turn instructions; the guide and
+report skill use the same policy. No additional agent or orchestration stage is involved.
+
+`MAX_SOURCES` counts distinct valid IDs cited in the prepared narrative, not retrieved records,
+repeat citations, source-only attribution labels, or model-generated bibliographies. Factual
+claims remain in the narrative even if prefixed with `Source:`. The same existing validation hook checks
+this limit before its single correction opportunity. If that correction still fails, the
+rejected draft is labelled incomplete with the exact violation and retains its genuine
+references, even if those exceed the cap. It is not accepted as a compliant report. Only unknown
+IDs become `[UNVERIFIED]`; a real retrieved source is never relabelled merely to shorten the
+reference list. All retrieved evidence remains available for follow-ups.
 
 An explicit `AGENT_MAX_TURNS` overrides the derived default. It can stop research before the
 search-call budget is consumed: routing, guide loading, evidence reads and final answers also
@@ -189,4 +202,28 @@ providers; it does not require live Ollama inference or consume research API cre
 Requests have explicit timeouts and cooperative cancellation, including stalled Ollama
 streams. Reports also check sentence-sized claims against original retrieved evidence,
 label conflicts and uncertainty in the same response, and save the checks as `grounding.json`.
+
+Structural headings, separators and citation-only footers are excluded from claim extraction.
+Cited factual assertions remain checked even when styled as headings. A detected contradiction
+stays beside the actual claim as **Unsupported by cited evidence**, with its reason and source
+IDs. Missing citations, unavailable evidence, unknown IDs and conflicting cited sources also
+remain marked inline. Semantic abstentions use short `[Review C#]` markers and one explanatory
+notice instead of repeating a long warning on every sentence. Each claim's original text,
+citations, status, reason, evidence excerpt and stable claim ID remain in Agent Activity and
+the saved JSON. Unresolved semantic support is not treated as factual correctness; valid
+paraphrases and unsupported inferences can both require review. No verifier model or additional
+validation/rewrite loop is added.
+
+To repeat the exact two-question scenario through real PyQt widgets, Ollama and the selected research provider:
+
+```bash
+QT_QPA_PLATFORM=offscreen agent-env.venv/bin/python -B scripts/verify_adhd_gui.py
+```
+
+This opt-in check uses the existing `.env` unchanged and consumes research API requests. It sends
+`why is there a surge in the ADHD diagnoses`, followed by `how can I manage my ADHD symptoms then`.
+Requests, rendered text, screenshots, activity and a summary are saved under the printed `/tmp`
+directory. It checks the same agent/worker, retained question history, direct follow-up format,
+response-card count, Qt responsiveness and orderly shutdown. It does not establish medical or
+research accuracy of the model's answers.
 

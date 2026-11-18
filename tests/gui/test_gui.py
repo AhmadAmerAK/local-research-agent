@@ -153,6 +153,49 @@ def test_gui_follow_up_keeps_native_agent_on_one_worker(qtbot, make_window, make
     assert state["workflow"]._closed
 
 
+def test_exact_two_question_gui_policy_and_grounding_stay_in_single_response_cards(
+        qtbot, make_window, make_session, monkeypatch):
+    from conftest import REPORT, call
+    from agent import tools
+    from dataclasses import replace
+    five = REPORT + "\nAdditional evidence [S4, S5]."
+    six = five + "\nFurther evidence [S6]."
+
+    monkeypatch.setattr(tools, "tavily_search", lambda *args: [
+        {"title": f"Source {i}", "url": f"https://example.org/{i}",
+         "content": "The trial included 40 adults with stroke."} for i in range(1, 9)])
+    state = {}
+
+    def factory(status, text, activity):
+        workflow, model, _, _, _ = make_session([
+            call("select_research_route", category="general"), call("read_research_instructions"),
+            call("search_web", query="diagnosis trends"), six, five,
+            call("select_research_route", category="general", follow_up=True),
+            "The trial included 400 adults with stroke [S1].",
+        ])
+        workflow.config = replace(workflow.config, max_sources=5, search_results_per_query=8)
+        workflow.on_status, workflow.on_text = status, text
+        workflow.on_event = lambda event: activity(Activity(event["kind"], event["payload"]))
+        state.update(workflow=workflow, model=model)
+        return workflow
+
+    window = make_window(factory)
+    send(qtbot, window, "why is there a surge in the ADHD diagnoses")
+    qtbot.waitUntil(lambda: window.worker is None)
+    worker, agent = window._session_worker, state["workflow"].agent
+    first_answer = window.answer_card.body.toPlainText()
+    assert "UNVERIFIED" not in first_answer and window.status.text() == "Research complete"
+    assert "Support not verified" not in first_answer
+    send(qtbot, window, "how can I manage my ADHD symptoms then")
+    qtbot.waitUntil(lambda: window.worker is None)
+    assert window._session_worker is worker and state["workflow"].agent is agent
+    answer = window.answer_card.body.toPlainText()
+    assert "Unsupported by cited evidence" in answer and "40" in answer and "400" in answer
+    assert "Perspective 1" not in answer
+    assert "CITATION_GROUNDING" in window.activity_view.toPlainText()
+    assert len(window.findChildren(MessageCard)) == 5
+
+
 @pytest.mark.parametrize("factory_error", [False, True])
 def test_failure_and_retry(qtbot, make_window, factory_error):
     def factory(*callbacks):
