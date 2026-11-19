@@ -11,14 +11,14 @@ from PyQt6.QtCore import Qt, QTimer, QUrl, pyqtSlot
 from PyQt6.QtGui import QColor, QDesktopServices, QKeySequence, QShortcut, QTextCursor
 from PyQt6.QtWidgets import (
     QApplication, QCheckBox, QFrame, QHBoxLayout, QLabel, QMainWindow, QPlainTextEdit,
-    QProgressBar, QPushButton, QScrollArea, QSplitter, QTextBrowser,
+    QProgressBar, QPushButton, QScrollArea, QSpinBox, QSplitter, QTextBrowser,
     QVBoxLayout, QWidget,
 )
 
 if __package__:
-    from .runtime import Activity, ResearchWorker, default_workflow_factory
+    from .runtime import Activity, ResearchWorker, default_retrieval_results, default_workflow_factory
 else:
-    from runtime import Activity, ResearchWorker, default_workflow_factory
+    from runtime import Activity, ResearchWorker, default_retrieval_results, default_workflow_factory
 
 
 STYLE = """
@@ -182,6 +182,20 @@ class ResearchWindow(QMainWindow):
         for toggle in (self.rag_toggle, self.reranking_toggle, self.local_toggle):
             modes.addWidget(toggle)
         conversation.addLayout(modes)
+        retrieval = QHBoxLayout()
+        self.retrieval_results = QSpinBox()
+        self.retrieval_results.setObjectName("retrievalResults")
+        self.retrieval_results.setRange(1, 100)
+        self.retrieval_results.setValue(default_retrieval_results())
+        self.retrieval_results.setAccessibleName("Knowledge base results to retrieve")
+        self.retrieval_results.setToolTip("Number of results for the next knowledge-base question (1–100).")
+        self.retrieval_results.setEnabled(False)
+        retrieval_label = QLabel("Results to retrieve:")
+        retrieval_label.setBuddy(self.retrieval_results)
+        retrieval.addWidget(retrieval_label)
+        retrieval.addWidget(self.retrieval_results)
+        retrieval.addStretch()
+        conversation.addLayout(retrieval)
         self.rag_toggle.toggled.connect(self._rag_changed)
         self.local_toggle.toggled.connect(self._local_changed)
         controls = QHBoxLayout()
@@ -251,11 +265,12 @@ class ResearchWindow(QMainWindow):
         self.rag_toggle.setEnabled(idle)
         self.local_toggle.setEnabled(idle)
         self.reranking_toggle.setEnabled(idle and self.rag_toggle.isChecked())
+        self.retrieval_results.setEnabled(idle and self.rag_toggle.isChecked())
 
     def _rag_changed(self, enabled):
         if enabled:
             self.local_toggle.setChecked(False)
-        self.reranking_toggle.setEnabled(enabled)
+        self._update_send()
         self._mode_hint()
 
     def _local_changed(self, enabled):
@@ -296,8 +311,11 @@ class ResearchWindow(QMainWindow):
         self._update_send()
         mode = "rag" if self.rag_toggle.isChecked() else "local" if self.local_toggle.isChecked() else "research"
         reranking = "MANAGED" if mode == "rag" and self.reranking_toggle.isChecked() else "NONE"
-        self.log_activity(Activity("answer_mode", {"mode": mode, "reranking": reranking if mode == "rag" else None}))
-        self.worker.submit(question, mode, reranking)
+        self.retrieval_results.interpretText()
+        number_of_results = self.retrieval_results.value() if mode == "rag" else None
+        self.log_activity(Activity("answer_mode", {"mode": mode, "reranking": reranking if mode == "rag" else None,
+                                                  "number_of_results": number_of_results}))
+        self.worker.submit(question, mode, reranking, number_of_results)
 
     @pyqtSlot(str)
     def show_status(self, text):

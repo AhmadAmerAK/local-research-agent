@@ -22,6 +22,19 @@ class Workflow(Protocol):
 WorkflowFactory = Callable[[Callable, Callable, Callable], Workflow]
 
 
+def default_retrieval_results():
+    from dotenv import load_dotenv
+    root = Path(__file__).resolve().parents[2]
+    load_dotenv(root / ".env", override=False)
+    if str(root / "src") not in sys.path:
+        sys.path.insert(0, str(root / "src"))
+    from agent.config import _integer
+    count = _integer("BEDROCK_NUMBER_OF_RESULTS", 5)
+    if count > 100:
+        raise ValueError("BEDROCK_NUMBER_OF_RESULTS must be between 1 and 100")
+    return count
+
+
 def default_workflow_factory(on_status, on_text, on_activity):
     from dotenv import load_dotenv
     root = Path(__file__).resolve().parents[2]
@@ -54,10 +67,13 @@ class ResearchWorker(QThread):
         self._stopping = Event()
         self._cancel_event = Event()
 
-    def submit(self, question, mode="research", reranking="NONE"):
+    def submit(self, question, mode="research", reranking="NONE", number_of_results=None):
         if self._stopping.is_set():
             raise RuntimeError("The research session is closing.")
-        self._questions.put((question, mode, reranking))
+        if mode == "rag" and number_of_results is not None:
+            if type(number_of_results) is not int or not 1 <= number_of_results <= 100:
+                raise ValueError("Retrieval results must be between 1 and 100")
+        self._questions.put((question, mode, reranking, number_of_results))
 
     def stop(self):
         self._stopping.set()
@@ -71,7 +87,7 @@ class ResearchWorker(QThread):
                 request = self._questions.get()
                 if request is None or self._stopping.is_set():
                     break
-                question, mode, reranking = request
+                question, mode, reranking, number_of_results = request
                 try:
                     key = (mode, reranking)
                     if key not in workflows:
@@ -84,6 +100,8 @@ class ResearchWorker(QThread):
                         if hasattr(workflow, "cancel_event"):
                             workflow.cancel_event = self._cancel_event
                     workflow = workflows[key]
+                    if mode == "rag" and number_of_results is not None:
+                        workflow.number_of_results = number_of_results
                     self.completed.emit(workflow.run(question))
                 except Exception as exc:
                     self.failed.emit(f"{type(exc).__name__}: {exc}")

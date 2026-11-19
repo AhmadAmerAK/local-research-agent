@@ -234,6 +234,12 @@ research accuracy of the model's answers.
 
 ## GUI trace export
 
+The GUI's **Results to retrieve** field starts from `BEDROCK_NUMBER_OF_RESULTS`
+(default 5). With RAG selected, change it between questions to request 1–100 results
+on the next retrieval, without restarting. Each question uses the value present
+when Send is pressed; the value is recorded in the trace and `evidence.json`.
+This session control does not write to `.env` or change CLI settings.
+
 The right-hand Agent Activity panel shows `KB_RETRIEVAL_RESULTS` with complete
 returned chunks and metadata, `KB_CONTEXT` with the exact selected/clipped excerpts,
 and `MODEL_INPUT` with the system prompt and messages passed to the local model.

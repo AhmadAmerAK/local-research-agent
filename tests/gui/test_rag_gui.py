@@ -1,4 +1,6 @@
 """Exercise real GUI/worker/local workflow with synthetic AWS and model responses."""
+import json
+import os
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -71,6 +73,61 @@ def test_modes_retrieval_and_screenshots(qtbot, tmp_path, monkeypatch):
         window.submit()
         qtbot.waitUntil(lambda: window.worker is None, timeout=5000)
         assert research_calls == ["Existing research"]
+    finally:
+        window.close()
+        qtbot.waitUntil(lambda: window._session_worker is None, timeout=5000)
+
+
+def test_live_retrieval_limit_applies_to_next_turn_in_reused_workflow(qtbot, tmp_path, monkeypatch):
+    monkeypatch.setenv("BEDROCK_NUMBER_OF_RESULTS", "7")
+    monkeypatch.setenv("AWS_REGION", "eu-west-2")
+    monkeypatch.setenv("BEDROCK_KNOWLEDGE_BASE_ID", "FAKEKB1234")
+    monkeypatch.setenv("OPENALEX_API_KEY", "synthetic")
+    monkeypatch.setenv("TAVILY_API_KEY", "synthetic")
+    client = Mock()
+    client.retrieve.return_value = {"retrievalResults": [{"content": {"text": "Synthetic review procedure."}}]}
+    workflows = []
+
+    def factory(mode, reranking, status):
+        flow = LocalAnswerWorkflow(Settings.from_env(), mode=mode, reranking=reranking,
+                                   client=client, output_dir=tmp_path / "answers",
+                                   model=ScriptedModel(["Review the procedure [KB1]."] * 3))
+        workflows.append(flow)
+        return flow
+
+    window = ResearchWindow(local_factory=factory, trace_directory=tmp_path / "session")
+    window.show()
+    try:
+        assert window.retrieval_results.value() == 7
+        assert window.retrieval_results.minimum() == 1
+        assert window.retrieval_results.maximum() == 100
+        assert not window.retrieval_results.isEnabled()
+        window.rag_toggle.setChecked(True)
+        assert window.retrieval_results.isEnabled()
+        for count in (7, 10):
+            window.retrieval_results.lineEdit().selectAll()
+            qtbot.keyClicks(window.retrieval_results.lineEdit(), str(count))
+            window.input.setPlainText("Describe the synthetic review procedure.")
+            window.submit()
+            qtbot.waitUntil(lambda: window.worker is None, timeout=5000)
+            assert client.retrieve.call_args.kwargs["retrievalConfiguration"]["managedSearchConfiguration"]["numberOfResults"] == count
+        assert len(workflows) == 1  # The existing workflow must not keep a stale limit.
+        window.reranking_toggle.setChecked(True)
+        window.retrieval_results.setValue(12)
+        window.input.setPlainText("Describe the synthetic review procedure.")
+        window.submit()
+        qtbot.waitUntil(lambda: window.worker is None, timeout=5000)
+        assert client.retrieve.call_args.kwargs["retrievalConfiguration"]["managedSearchConfiguration"] == {"numberOfResults": 12, "rerankingModelType": "MANAGED"}
+        assert [e["payload"]["number_of_results"] for e in window.trace_events if e["kind"] == "answer_mode"] == [7, 10, 12]
+        assert [json.loads((Path(d) / "evidence.json").read_text())["number_of_results"] for d in window._run_directories] == [7, 10, 12]
+        assert os.environ["BEDROCK_NUMBER_OF_RESULTS"] == "7"
+        window.local_toggle.setChecked(True)
+        assert not window.retrieval_results.isEnabled()
+        window.local_toggle.setChecked(False)
+        assert not window.retrieval_results.isEnabled()
+        assert window.retrieval_results.value() == 12
+        window.rag_toggle.setChecked(True)
+        window.grab().save("/tmp/rag-gui-live-results.png")
     finally:
         window.close()
         qtbot.waitUntil(lambda: window._session_worker is None, timeout=5000)
