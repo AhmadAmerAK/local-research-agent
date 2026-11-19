@@ -17,7 +17,11 @@ from agent.orchestrator import ResearchWorkflow  # noqa: E402
 def main() -> int:
     parser = argparse.ArgumentParser(description="Local research agent")
     parser.add_argument("question", nargs="*", help="A research question")
+    parser.add_argument("--rag", choices=("on", "off"), help="on: KB only; off: local model only; omitted: existing research")
+    parser.add_argument("--reranking", choices=("NONE", "MANAGED"), default=None, help="KB reranking (default NONE; requires --rag on)")
     args = parser.parse_args()
+    if args.reranking and args.rag != "on":
+        parser.error("--reranking requires --rag on")
     question = " ".join(args.question).strip() or input("Research question: ").strip()
     if not question:
         print("No research question supplied.", file=sys.stderr)
@@ -26,7 +30,13 @@ def main() -> int:
     workflow = None
     try:
         settings = Settings.from_env()
-        workflow = ResearchWorkflow(settings, on_status=lambda s: print(f"[status] {s}", file=sys.stderr))
+        status = lambda s: print(f"[status] {s}", file=sys.stderr)
+        if args.rag is None:
+            workflow = ResearchWorkflow(settings, on_status=status)
+        else:
+            from agent.rag import LocalAnswerWorkflow
+            workflow = LocalAnswerWorkflow(settings, mode="rag" if args.rag == "on" else "local",
+                                           reranking=args.reranking or "NONE", on_status=status)
         output = workflow.run(question)
     except Exception as exc:
         print(f"Research failed: {exc}", file=sys.stderr)

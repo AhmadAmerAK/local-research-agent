@@ -46,17 +46,18 @@ class ResearchWorker(QThread):
     failed = pyqtSignal(str)
     turn_finished = pyqtSignal()
 
-    def __init__(self, factory: WorkflowFactory, parent=None):
+    def __init__(self, factory: WorkflowFactory, parent=None, local_factory=None):
         super().__init__(parent)
         self.factory = factory
+        self.local_factory = local_factory or local_workflow_factory
         self._questions = Queue()
         self._stopping = Event()
         self._cancel_event = Event()
 
-    def submit(self, question):
+    def submit(self, question, mode="research", reranking="NONE"):
         if self._stopping.is_set():
             raise RuntimeError("The research session is closing.")
-        self._questions.put(question)
+        self._questions.put((question, mode, reranking))
 
     def stop(self):
         self._stopping.set()
@@ -64,25 +65,45 @@ class ResearchWorker(QThread):
         self._questions.put(None)
 
     def run(self):
-        workflow = None
+        workflows = {}
         try:
             while not self._stopping.is_set():
-                question = self._questions.get()
-                if question is None or self._stopping.is_set():
+                request = self._questions.get()
+                if request is None or self._stopping.is_set():
                     break
+                question, mode, reranking = request
                 try:
-                    if workflow is None:
-                        workflow = self.factory(self.status.emit, self.text.emit, self.activity.emit)
+                    key = (mode, reranking)
+                    if key not in workflows:
+                        workflow = (self.factory(self.status.emit, self.text.emit, self.activity.emit)
+                                    if mode == "research" else
+                                    self.local_factory(mode, reranking, self.status.emit))
+                        workflows[key] = workflow
+                        if mode != "research" and hasattr(workflow, "on_event"):
+                            workflow.on_event = lambda event: self.activity.emit(Activity(event["kind"], event["payload"]))
                         if hasattr(workflow, "cancel_event"):
                             workflow.cancel_event = self._cancel_event
+                    workflow = workflows[key]
                     self.completed.emit(workflow.run(question))
                 except Exception as exc:
                     self.failed.emit(f"{type(exc).__name__}: {exc}")
                 finally:
                     self.turn_finished.emit()
         finally:
-            if workflow is not None and callable(getattr(workflow, "close", None)):
+            for workflow in workflows.values():
                 try:
-                    workflow.close()
+                    if callable(getattr(workflow, "close", None)):
+                        workflow.close()
                 except Exception as exc:
                     self.activity.emit(Activity("error", f"Session shutdown: {type(exc).__name__}: {exc}"))
+
+
+def local_workflow_factory(mode, reranking, on_status):
+    from dotenv import load_dotenv
+    root = Path(__file__).resolve().parents[2]
+    load_dotenv(root / ".env", override=False)
+    if str(root / "src") not in sys.path:
+        sys.path.insert(0, str(root / "src"))
+    from agent.config import Settings
+    from agent.rag import LocalAnswerWorkflow
+    return LocalAnswerWorkflow(Settings.from_env(), mode=mode, reranking=reranking, on_status=on_status)

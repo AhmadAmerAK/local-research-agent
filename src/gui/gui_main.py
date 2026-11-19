@@ -1,13 +1,16 @@
 """Desktop research application. Launch: python src/gui/gui_main.py."""
-from datetime import datetime
+from datetime import datetime, timezone
 import json
+import os
+from pathlib import Path
 import re
 import sys
+from uuid import uuid4
 
 from PyQt6.QtCore import Qt, QTimer, QUrl, pyqtSlot
 from PyQt6.QtGui import QColor, QDesktopServices, QKeySequence, QShortcut, QTextCursor
 from PyQt6.QtWidgets import (
-    QApplication, QFrame, QHBoxLayout, QLabel, QMainWindow, QPlainTextEdit,
+    QApplication, QCheckBox, QFrame, QHBoxLayout, QLabel, QMainWindow, QPlainTextEdit,
     QProgressBar, QPushButton, QScrollArea, QSplitter, QTextBrowser,
     QVBoxLayout, QWidget,
 )
@@ -105,15 +108,24 @@ class MessageCard(QFrame):
 
 
 class ResearchWindow(QMainWindow):
-    def __init__(self, workflow_factory=default_workflow_factory):
+    def __init__(self, workflow_factory=default_workflow_factory, local_factory=None, trace_directory=None):
         super().__init__()
         self.workflow_factory = workflow_factory
+        self.local_factory = local_factory
         self.worker = None
         self._session_worker = None
         self.pending_close = False
         self.draft = ""
         self.answer_card = None
         self.follow_history = True
+        self.trace_started_at = datetime.now(timezone.utc).isoformat()
+        directory = (Path(trace_directory) if trace_directory else
+                     Path(__file__).resolve().parents[1] / "agent" / "memory" / "runs" /
+                     ("gui-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S") + "-" + uuid4().hex[:8]))
+        self.trace_path = directory / "trace.json"
+        self.trace_events = []
+        self._trace_saved = False
+        self._run_directories = []
         self.setWindowTitle("Local Research Agent")
         self.resize(1280, 840)
         self.setMinimumSize(800, 600)
@@ -125,7 +137,7 @@ class ResearchWindow(QMainWindow):
         layout.setSpacing(16)
         header = QHBoxLayout()
         titles = QVBoxLayout()
-        brand = QLabel("Local Research Agent")
+        brand = QLabel("Local Research Agent (RAG Enhanced)")
         brand.setObjectName("brand")
         titles.addWidget(brand)
         subtitle = QLabel("Ask a question. Follow the evidence.")
@@ -162,8 +174,18 @@ class ResearchWindow(QMainWindow):
         self.input.setAccessibleName("Research question")
         self.input.setFixedHeight(100)
         conversation.addWidget(self.input)
+        modes = QHBoxLayout()
+        self.rag_toggle = QCheckBox("Use knowledge base (RAG)")
+        self.reranking_toggle = QCheckBox("Managed reranking")
+        self.local_toggle = QCheckBox("Local only (no web / KB)")
+        self.reranking_toggle.setEnabled(False)
+        for toggle in (self.rag_toggle, self.reranking_toggle, self.local_toggle):
+            modes.addWidget(toggle)
+        conversation.addLayout(modes)
+        self.rag_toggle.toggled.connect(self._rag_changed)
+        self.local_toggle.toggled.connect(self._local_changed)
         controls = QHBoxLayout()
-        hint = QLabel("Ctrl+Enter to send · Academic & web research")
+        hint = self.mode_hint = QLabel("Ctrl+Enter to send · Academic & web research")
         hint.setObjectName("hint")
         controls.addWidget(hint)
         controls.addStretch()
@@ -204,13 +226,14 @@ class ResearchWindow(QMainWindow):
         self.shortcut.activated.connect(self.submit)
         self.input.textChanged.connect(self._update_send)
         self._update_send()
-        self.add_message("Research assistant", "Ask an academic or general research question. "
+        self.add_message("Research assistant", "Ask an academic or general research question, or connect your Knowledge Base and chat with your documents. "
                          "Your report and sources will appear here; execution activity appears alongside.")
         self.input.setFocus()
         # Batch draft rendering to keep token streaming inexpensive.
         self.draft_timer = QTimer(self)
         self.draft_timer.setInterval(80)
         self.draft_timer.timeout.connect(self._render_draft)
+        self.log_activity(Activity("session_trace", {"path": str(self.trace_path)}))
 
     def _scroll_bottom(self, *_):
         if self.follow_history:
@@ -224,6 +247,27 @@ class ResearchWindow(QMainWindow):
 
     def _update_send(self):
         self.send.setEnabled(not self.pending_close and self.worker is None and bool(self.input.toPlainText().strip()))
+        idle = not self.pending_close and self.worker is None
+        self.rag_toggle.setEnabled(idle)
+        self.local_toggle.setEnabled(idle)
+        self.reranking_toggle.setEnabled(idle and self.rag_toggle.isChecked())
+
+    def _rag_changed(self, enabled):
+        if enabled:
+            self.local_toggle.setChecked(False)
+        self.reranking_toggle.setEnabled(enabled)
+        self._mode_hint()
+
+    def _local_changed(self, enabled):
+        if enabled:
+            self.rag_toggle.setChecked(False)
+        self._mode_hint()
+
+    def _mode_hint(self):
+        mode = ("Knowledge base only · no web" if self.rag_toggle.isChecked() else
+                "Local model only · no web / KB" if self.local_toggle.isChecked() else
+                "Academic & web research")
+        self.mode_hint.setText("Ctrl+Enter to send · " + mode)
 
     @pyqtSlot()
     def submit(self):
@@ -239,7 +283,7 @@ class ResearchWindow(QMainWindow):
         self.status.setText("Starting research…")
         self.log_activity(Activity("research_started", question))
         if self._session_worker is None:
-            self._session_worker = ResearchWorker(self.workflow_factory, self)
+            self._session_worker = ResearchWorker(self.workflow_factory, self, local_factory=self.local_factory)
             self._session_worker.status.connect(self.show_status)
             self._session_worker.text.connect(self.append_text)
             self._session_worker.activity.connect(self.log_activity)
@@ -250,7 +294,10 @@ class ResearchWindow(QMainWindow):
             self._session_worker.start()
         self.worker = self._session_worker
         self._update_send()
-        self.worker.submit(question)
+        mode = "rag" if self.rag_toggle.isChecked() else "local" if self.local_toggle.isChecked() else "research"
+        reranking = "MANAGED" if mode == "rag" and self.reranking_toggle.isChecked() else "NONE"
+        self.log_activity(Activity("answer_mode", {"mode": mode, "reranking": reranking if mode == "rag" else None}))
+        self.worker.submit(question, mode, reranking)
 
     @pyqtSlot(str)
     def show_status(self, text):
@@ -270,6 +317,10 @@ class ResearchWindow(QMainWindow):
 
     @pyqtSlot(object)
     def log_activity(self, event):
+        now = datetime.now().astimezone()
+        # Freeze payloads as received; later workflow mutations cannot alter history.
+        self.trace_events.append({"timestamp": now.isoformat(), "kind": event.kind,
+                                  "payload": json.loads(json.dumps(event.payload, ensure_ascii=False, default=str))})
         if event.kind == "draft_reset":
             self.draft_timer.stop()
             self.draft = event.payload or ""
@@ -283,12 +334,31 @@ class ResearchWindow(QMainWindow):
                 cursor.insertText("\nMODEL MESSAGE\n")
             cursor.insertText(str(event.payload))
         else:
-            payload = event.payload if isinstance(event.payload, str) else json.dumps(
-                event.payload, ensure_ascii=False, indent=2, default=str)
-            cursor.insertText(f"\n\n{datetime.now():%H:%M:%S}  {event.kind.upper()}\n{payload}\n")
+            payload = self._activity_payload(event)
+            cursor.insertText(f"\n\n{now:%H:%M:%S}  {event.kind.upper()}\n{payload}\n")
         self.last_activity_kind = event.kind
         self.activity_view.setTextCursor(cursor)
         self.activity_view.ensureCursorVisible()
+
+    @staticmethod
+    def _activity_payload(event):
+        payload = event.payload
+        if event.kind == "kb_retrieval_results":
+            header = json.dumps({k: v for k, v in payload.items() if k != "results"}, ensure_ascii=False, indent=2)
+            parts = [header]
+            for rank, hit in enumerate(payload["results"], 1):
+                metadata = json.dumps({k: v for k, v in hit.items() if k != "content"}, ensure_ascii=False, indent=2, default=str)
+                content = hit.get("content", {})
+                text = content.get("text")
+                parts.append(f"RETRIEVED CHUNK {rank}\n{metadata}\nExact returned text:\n" +
+                             (text if isinstance(text, str) else json.dumps(content, ensure_ascii=False)))
+            return "\n\n".join(parts)
+        if event.kind == "kb_context":
+            header = json.dumps({k: v for k, v in payload.items() if k != "passages"}, ensure_ascii=False, indent=2, default=str)
+            return header + "\n\n" + "\n\n".join(
+                f"INJECTED [{p['id']}]\n{p['title']}\n{p['location']}\nExact injected excerpt:\n{p['text']}"
+                for p in payload["passages"])
+        return payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False, indent=2, default=str)
 
     @pyqtSlot(object)
     def show_result(self, result):
@@ -297,7 +367,7 @@ class ResearchWindow(QMainWindow):
         answer = result.answer
         urls = {s.source_id: s.url for s in result.sources
                 if QUrl(s.url).scheme().lower() in {"http", "https"}}
-        answer = re.sub(r"\[(S\d+)\](?!\()", lambda m: (
+        answer = re.sub(r"\[((?:S|KB)\d+)\](?!\()", lambda m: (
             f"[{m[1]}](<{urls[m[1]]}>)" if m[1] in urls else m[0]), answer)
         for warning in result.warnings:
             # Execution diagnostics belong in the activity trace. The report
@@ -309,6 +379,8 @@ class ResearchWindow(QMainWindow):
             answer += "\n\n---\n\nThis answer is incomplete. Please try again for a full response."
         self.answer_card.set_text(answer, markdown=True)
         self.answer_card.findChild(QLabel, "role").setText("Research assistant")
+        if result.run_directory and result.run_directory not in self._run_directories:
+            self._run_directories.append(result.run_directory)
         unavailable = result.route in {"academic", "general"} and not result.sources
         self.status.setText("Research cancelled" if cancelled else
                             "Research unavailable — please try again" if unavailable else
@@ -354,6 +426,8 @@ class ResearchWindow(QMainWindow):
 
     def closeEvent(self, event):
         if self._session_worker is not None:
+            if not self.pending_close:
+                self.log_activity(Activity("session_closing", "Waiting for workflow shutdown before saving trace."))
             self.pending_close = True
             self.status.setText("Closing research session…")
             self.input.setEnabled(False)
@@ -361,7 +435,29 @@ class ResearchWindow(QMainWindow):
             self._session_worker.stop()
             event.ignore()
         else:
+            try:
+                self._save_trace()
+            except (OSError, ValueError, TypeError) as exc:
+                self.status.setText("Trace could not be saved. Close again to retry.")
+                self.log_activity(Activity("error", f"Trace save failed: {exc}"))
+                event.ignore()
+                return
             event.accept()
+
+    def _save_trace(self):
+        if self._trace_saved:
+            return
+        self.trace_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        temporary = self.trace_path.with_suffix(".tmp")
+        record = {"started_at": self.trace_started_at, "closed_at": datetime.now(timezone.utc).isoformat(),
+                  "run_directories": self._run_directories, "events": self.trace_events,
+                  "rendered_text": self.activity_view.toPlainText()}
+        with temporary.open("w", encoding="utf-8") as handle:
+            os.chmod(temporary, 0o600)
+            json.dump(record, handle, ensure_ascii=False, indent=2)
+        temporary.replace(self.trace_path)
+        self._trace_saved = True
+        print(f"[trace saved] {self.trace_path}", file=sys.stderr)
 
 
 def main():

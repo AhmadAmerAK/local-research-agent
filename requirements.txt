@@ -16,3 +16,6 @@ python-dotenv
 # Testing
 pytest
 pytest-qt
+
+# Known compatible SDK floor for managedSearchConfiguration (checked offline).
+boto3[crt]>=1.43.109

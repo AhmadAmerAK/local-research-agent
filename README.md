@@ -199,6 +199,11 @@ providers; it does not require live Ollama inference or consume research API cre
 
 ## Reliability checks
 
+Opt-in managed Bedrock KB and local-only control: see [RAG setup and commands](docs/RAG.md).
+Existing research remains the default. RAG uses local Ollama generation with no web fallback.
+The RAG path has its own narrow citation check; the research grounding checks below apply
+to the existing research route.
+
 Requests have explicit timeouts and cooperative cancellation, including stalled Ollama
 streams. Reports also check sentence-sized claims against original retrieved evidence,
 label conflicts and uncertainty in the same response, and save the checks as `grounding.json`.
@@ -226,4 +231,35 @@ Requests, rendered text, screenshots, activity and a summary are saved under the
 directory. It checks the same agent/worker, retained question history, direct follow-up format,
 response-card count, Qt responsiveness and orderly shutdown. It does not establish medical or
 research accuracy of the model's answers.
+
+## GUI trace export
+
+The right-hand Agent Activity panel shows `KB_RETRIEVAL_RESULTS` with complete
+returned chunks and metadata, `KB_CONTEXT` with the exact selected/clipped excerpts,
+and `MODEL_INPUT` with the system prompt and messages passed to the local model.
+Raw model text, metadata and citation-validation events also appear there.
+
+Closing the GUI waits for worker shutdown, then saves the entire session to
+`src/agent/memory/runs/gui-<timestamp>-<id>/trace.json`. The file contains ordered,
+timestamped events, the exact visible panel text in `rendered_text`, and links to
+question-level run directories containing `evidence.json`. Its path appears in
+the panel's initial `SESSION_TRACE` entry and is printed on successful close.
+If saving fails, the window stays open and reports the error so closing can be retried.
+These traces include document text and remain local in the ignored runs directory.
+
+KB citations use linked original document titles and returned page metadata when
+available. `[KB…]` markers are clickable for HTTP(S) sources. No excerpt line numbers,
+invented page numbers or LLM-generated source titles are added.
+
+One valid KB citation can support related statements across paragraphs or a list;
+citations are not required in every paragraph. The model must still use relevant
+retrieved evidence. The structural check rejects missing or unknown source IDs,
+but does not prove semantic support. Citation failures report a validation problem
+rather than claiming that the KB lacks evidence; `KB_VALIDATION` includes the reason.
+
+RAG reserves `OUTPUT_TOKENS` and 512 tokens for framing, then packs excerpts using
+an input estimate: two ASCII bytes per token, with non-ASCII UTF-8 bytes counted
+individually. Serialized source metadata and JSON escaping count toward that budget.
+This is an estimate, not the selected model's tokenizer; long excerpts still have
+the existing 2,000-byte cap and any clipping is shown in the trace.
 
